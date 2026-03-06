@@ -14,13 +14,13 @@ google-auth-oauthlib==1.2.0
 google-generativeai==0.7.2
 
 # Image processing
-Pillow==10.3.0
+Pillow>=10.3.0
 requests==2.31.0
 
 # Vision fallback (optional — comment out if tesseract not installed)
-opencv-python-headless==4.9.0.80
+opencv-python-headless>=4.9.0.80
 pytesseract==0.3.10
-numpy==1.26.4
+numpy>=1.26.4
 
 # DOM matching (optional — run: playwright install chromium)
 playwright==1.44.0
