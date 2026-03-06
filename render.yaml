@@ -7,7 +7,7 @@ services:
     buildCommand: >
       cd backend &&
       pip install -r requirements.txt &&
-      python -m playwright install --with-deps chromium
+      (python -m playwright install chromium || echo "Playwright install skipped")
     startCommand: "cd backend && uvicorn main:app --host 0.0.0.0 --port $PORT"
     envVars:
       - key: GEMINI_API_KEY
