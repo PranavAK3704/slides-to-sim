@@ -1,0 +1,26 @@
+# Core API
+fastapi==0.111.0
+uvicorn[standard]==0.29.0
+python-dotenv==1.0.1
+pydantic==2.7.1
+aiofiles==23.2.1
+python-multipart==0.0.9
+
+# Google APIs
+google-api-python-client==2.131.0
+google-auth==2.29.0
+google-auth-httplib2==0.2.0
+google-auth-oauthlib==1.2.0
+google-generativeai==0.7.2
+
+# Image processing
+Pillow==10.3.0
+requests==2.31.0
+
+# Vision fallback (optional — comment out if tesseract not installed)
+opencv-python-headless==4.9.0.80
+pytesseract==0.3.10
+numpy==1.26.4
+
+# DOM matching (optional — run: playwright install chromium)
+playwright==1.44.0
