@@ -6,24 +6,23 @@ Single FastAPI service that chains all pipeline phases:
 POST /api/generate
   → Slide Ingestion
   → Vision Analysis
-  → Instruction Parsing
-  → Step Ordering
+  → Instruction Parsing + Step Ordering
+  → DOM Matching (when target_url provided) — captures screenshots + hotspots
   → Simulation Generation
-  (DOM Matching runs separately, needs target URL)
 
 GET /api/jobs/{job_id}
 GET /api/simulations/{sim_id}
+GET /static/...  ← serves slide images and step screenshots
 """
 
 import os
 import sys
 import uuid
 import json
-import logging
 import asyncio
+import logging
 from pathlib import Path
 from typing import Optional
-from threading import Thread
 from datetime import datetime
 
 from fastapi import FastAPI, HTTPException, BackgroundTasks
@@ -33,15 +32,17 @@ from pydantic import BaseModel
 from dotenv import load_dotenv
 
 # Add service modules to path
-sys.path.insert(0, str(Path(__file__).parent.parent / "slide-ingestion"))
-sys.path.insert(0, str(Path(__file__).parent.parent / "vision-analysis"))
-sys.path.insert(0, str(Path(__file__).parent.parent / "instruction-parser"))
-sys.path.insert(0, str(Path(__file__).parent.parent / "simulation-generator"))
+sys.path.insert(0, str(Path(__file__).parent / "slide-ingestion"))
+sys.path.insert(0, str(Path(__file__).parent / "vision-analysis"))
+sys.path.insert(0, str(Path(__file__).parent / "instruction-parser"))
+sys.path.insert(0, str(Path(__file__).parent / "simulation-generator"))
+sys.path.insert(0, str(Path(__file__).parent / "dom-matcher"))
 
 from ingestion import ingest_presentation
 from vision import analyze_presentation
 from parser import parse_and_order
 from generator import build_simulation_config
+from dom_matcher import match_workflow as dom_match_workflow
 
 load_dotenv()
 logging.basicConfig(level=logging.INFO)
@@ -60,29 +61,54 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Job + simulation store (Phase 8 migrates to SQLite)
-jobs: dict[str, dict] = {}
-simulations: dict[str, dict] = {}
-
-OUTPUT_DIR = Path("./output")
+OUTPUT_DIR = Path(os.getenv("OUTPUT_DIR", "./output")).resolve()
 OUTPUT_DIR.mkdir(exist_ok=True)
 (OUTPUT_DIR / "slides").mkdir(exist_ok=True)
 (OUTPUT_DIR / "simulations").mkdir(exist_ok=True)
+(OUTPUT_DIR / "screenshots").mkdir(exist_ok=True)
+
+# Serve slide images and step screenshots
+app.mount("/static", StaticFiles(directory=str(OUTPUT_DIR)), name="static")
+
+# In-memory stores (Phase 8 migrates to SQLite)
+jobs: dict[str, dict] = {}
+simulations: dict[str, dict] = {}
 
 
 # ─── Request Models ───────────────────────────────────────────────────────────
 
 class GenerateRequest(BaseModel):
     slides_url: str
-    target_url: Optional[str] = None  # for DOM matching phase
+    target_url: Optional[str] = None
     options: Optional[dict] = {}
 
-class DOMMatchRequest(BaseModel):
-    simulation_id: str
-    target_url: str
+
+# ─── Path → URL Helpers ───────────────────────────────────────────────────────
+
+def path_to_static_url(abs_path: str) -> Optional[str]:
+    """Convert a file path (relative or absolute) under OUTPUT_DIR to a /static/... URL."""
+    try:
+        rel = Path(abs_path).resolve().relative_to(OUTPUT_DIR)
+        return f"/static/{rel.as_posix()}"
+    except (ValueError, TypeError):
+        return None
 
 
-# ─── Pipeline Phases ──────────────────────────────────────────────────────────
+def annotate_slide_urls(ingestion_result: dict) -> None:
+    """Add image_url to each slide in-place (absolute path → /static/... URL)."""
+    for slide in ingestion_result.get("slides", []):
+        if slide.get("image_path"):
+            slide["image_url"] = path_to_static_url(slide["image_path"])
+
+
+def annotate_step_urls(workflow: dict) -> None:
+    """Add screenshot_url to each step in-place."""
+    for step in workflow.get("steps", []):
+        if step.get("screenshot_path"):
+            step["screenshot_url"] = path_to_static_url(step["screenshot_path"])
+
+
+# ─── Pipeline ─────────────────────────────────────────────────────────────────
 
 def update_job(job_id: str, **kwargs):
     if job_id in jobs:
@@ -90,45 +116,55 @@ def update_job(job_id: str, **kwargs):
 
 
 def run_pipeline(job_id: str, slides_url: str, target_url: Optional[str]):
-    """Run full pipeline in background thread."""
+    """Run the full pipeline in a background thread."""
     try:
         # Phase 1: Slide Ingestion
-        update_job(job_id, status="processing", progress=10, 
-                   current_phase="Ingesting slides from Google Slides")
+        update_job(job_id, status="processing", progress=10,
+                   current_phase="Fetching slides from Google Slides")
         ingestion_result = ingest_presentation(slides_url, job_id)
-        update_job(job_id, progress=30, current_phase="Analyzing slide visuals with Gemini Vision")
-        
+        annotate_slide_urls(ingestion_result)
+
         # Phase 2: Vision Analysis
+        update_job(job_id, progress=30, current_phase="Analyzing slides with Gemini Vision")
         vision_result = analyze_presentation(ingestion_result)
-        update_job(job_id, progress=55, current_phase="Extracting and ordering workflow steps")
-        
+
         # Phase 3+4: Instruction Parsing + Step Ordering
+        update_job(job_id, progress=50, current_phase="Extracting and ordering workflow steps")
         workflow = parse_and_order(ingestion_result, vision_result)
-        update_job(job_id, progress=75, current_phase="Generating simulation configuration")
-        
-        # Phase 6: Simulation Generation
+
+        # Phase 5: DOM Matching (only when target URL provided)
         if target_url:
-            workflow["target_url"] = target_url
-        
+            update_job(job_id, progress=65, current_phase="Capturing app screenshots with Playwright")
+            screenshot_dir = OUTPUT_DIR / "screenshots" / job_id
+            try:
+                loop = asyncio.new_event_loop()
+                try:
+                    workflow = loop.run_until_complete(
+                        dom_match_workflow(target_url, workflow, screenshot_dir)
+                    )
+                finally:
+                    loop.close()
+                annotate_step_urls(workflow)
+                logger.info(f"DOM matching complete for job {job_id}")
+            except Exception as e:
+                logger.error(f"DOM matching failed (continuing without it): {e}")
+                workflow["target_url"] = target_url
+
+        # Phase 6: Simulation Generation
+        update_job(job_id, progress=80, current_phase="Generating simulation configuration")
         sim_config = build_simulation_config(workflow, ingestion_result)
-        
-        # Store simulation
+
+        # Store + persist
         sim_id = sim_config["id"]
         simulations[sim_id] = sim_config
-        
-        # Save to disk
         sim_path = OUTPUT_DIR / "simulations" / f"{sim_id}.json"
         with open(sim_path, "w") as f:
             json.dump(sim_config, f, indent=2)
-        
-        update_job(job_id, 
-                   status="complete", 
-                   progress=100,
-                   current_phase="Done",
-                   simulation_id=sim_id)
-        
-        logger.info(f"✅ Job {job_id} → Simulation {sim_id} complete")
-        
+
+        update_job(job_id, status="complete", progress=100,
+                   current_phase="Done", simulation_id=sim_id)
+        logger.info(f"Job {job_id} → Simulation {sim_id} complete")
+
     except Exception as e:
         logger.error(f"Pipeline failed for job {job_id}: {e}", exc_info=True)
         update_job(job_id, status="error", current_phase="Failed", error=str(e))
@@ -138,22 +174,12 @@ def run_pipeline(job_id: str, slides_url: str, target_url: Optional[str]):
 
 @app.get("/health")
 def health():
-    return {
-        "status": "ok",
-        "service": "slides-to-sim-api",
-        "version": "1.0.0",
-        "timestamp": datetime.utcnow().isoformat(),
-    }
+    return {"status": "ok", "service": "slides-to-sim-api", "version": "1.0.0"}
 
 
 @app.post("/api/generate")
 def generate(request: GenerateRequest, background_tasks: BackgroundTasks):
-    """
-    Submit a Google Slides URL to generate a simulation.
-    Returns job_id for polling.
-    """
     job_id = str(uuid.uuid4())[:8]
-    
     jobs[job_id] = {
         "job_id": job_id,
         "status": "pending",
@@ -165,12 +191,8 @@ def generate(request: GenerateRequest, background_tasks: BackgroundTasks):
         "error": None,
         "created_at": datetime.utcnow().isoformat(),
     }
-    
-    background_tasks.add_task(
-        run_pipeline, job_id, request.slides_url, request.target_url
-    )
-    
-    logger.info(f"Created job {job_id} for {request.slides_url}")
+    background_tasks.add_task(run_pipeline, job_id, request.slides_url, request.target_url)
+    logger.info(f"Created job {job_id}")
     return jobs[job_id]
 
 
@@ -183,25 +205,19 @@ def get_job(job_id: str):
 
 @app.get("/api/simulations/{sim_id}")
 def get_simulation(sim_id: str):
-    """Get simulation config by ID."""
-    # Check memory first
     if sim_id in simulations:
         return simulations[sim_id]
-    
-    # Check disk
     sim_path = OUTPUT_DIR / "simulations" / f"{sim_id}.json"
     if sim_path.exists():
         with open(sim_path) as f:
             sim = json.load(f)
-            simulations[sim_id] = sim  # cache
+            simulations[sim_id] = sim
             return sim
-    
     raise HTTPException(status_code=404, detail="Simulation not found")
 
 
 @app.get("/api/simulations")
 def list_simulations():
-    """List all generated simulations."""
     sims = []
     for path in (OUTPUT_DIR / "simulations").glob("*.json"):
         try:
@@ -212,17 +228,16 @@ def list_simulations():
                     "title": sim.get("title"),
                     "stepCount": sim.get("stepCount"),
                     "createdAt": sim.get("createdAt"),
+                    "domMatched": sim.get("domMatched", False),
                 })
         except Exception:
             continue
-    
     sims.sort(key=lambda s: s.get("createdAt", ""), reverse=True)
     return sims
 
 
 @app.delete("/api/simulations/{sim_id}")
 def delete_simulation(sim_id: str):
-    """Delete a simulation."""
     simulations.pop(sim_id, None)
     sim_path = OUTPUT_DIR / "simulations" / f"{sim_id}.json"
     if sim_path.exists():

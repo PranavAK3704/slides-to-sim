@@ -16,3 +16,12 @@ temp/
 venv/
 .venv/
 *.egg-info/
+
+# Google service account keys — NEVER commit these
+*-service-account*.json
+*serviceaccount*.json
+backend/*.json
+
+# Generated output (slide images, screenshots, simulations)
+backend/output/
+output/

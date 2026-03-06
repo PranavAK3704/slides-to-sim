@@ -38,6 +38,8 @@ load_dotenv()
 logger = logging.getLogger(__name__)
 
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
+GOOGLE_SERVICE_ACCOUNT_JSON = os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON")
+GOOGLE_SERVICE_ACCOUNT_JSON_CONTENT = os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON_CONTENT")
 OUTPUT_DIR = Path(os.getenv("OUTPUT_DIR", "./output/slides"))
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -65,11 +67,40 @@ def extract_presentation_id(url: str) -> str:
 
 # ─── Google Slides API Client ─────────────────────────────────────────────────
 
+def _get_credentials():
+    """
+    Return Google OAuth2 credentials.
+    Priority:
+      1. Service account JSON file  (GOOGLE_SERVICE_ACCOUNT_JSON path)
+      2. Service account JSON string (GOOGLE_SERVICE_ACCOUNT_JSON_CONTENT) — used on Render/cloud
+      3. Application Default Credentials (gcloud auth application-default login)
+    """
+    SCOPES = ["https://www.googleapis.com/auth/presentations.readonly"]
+
+    # Option 1: local JSON file
+    if GOOGLE_SERVICE_ACCOUNT_JSON and Path(GOOGLE_SERVICE_ACCOUNT_JSON).exists():
+        from google.oauth2 import service_account
+        return service_account.Credentials.from_service_account_file(
+            GOOGLE_SERVICE_ACCOUNT_JSON, scopes=SCOPES
+        )
+
+    # Option 2: JSON content passed as env var (for Render / Vercel / any cloud deployment)
+    if GOOGLE_SERVICE_ACCOUNT_JSON_CONTENT:
+        import json as _json
+        from google.oauth2 import service_account
+        info = _json.loads(GOOGLE_SERVICE_ACCOUNT_JSON_CONTENT)
+        return service_account.Credentials.from_service_account_info(info, scopes=SCOPES)
+
+    # Option 3: Application Default Credentials
+    import google.auth
+    creds, _ = google.auth.default(scopes=SCOPES)
+    return creds
+
+
 def get_slides_service():
-    """Build Google Slides API service using API key (no OAuth needed for public decks)."""
-    if not GOOGLE_API_KEY:
-        raise EnvironmentError("GOOGLE_API_KEY is not set in environment")
-    return build("slides", "v1", developerKey=GOOGLE_API_KEY)
+    """Build authenticated Google Slides API service."""
+    creds = _get_credentials()
+    return build("slides", "v1", credentials=creds)
 
 
 # ─── Shape Text Extraction ────────────────────────────────────────────────────
@@ -115,24 +146,32 @@ def classify_shape_role(shape: dict, slide_height: float) -> str:
 
 # ─── Slide Image Download ─────────────────────────────────────────────────────
 
-def download_slide_image(presentation_id: str, slide_index: int, job_dir: Path) -> Optional[str]:
+def _get_auth_headers() -> dict:
+    """Get Authorization headers using current credentials."""
+    try:
+        from google.auth.transport.requests import Request
+        creds = _get_credentials()
+        creds.refresh(Request())
+        return {"Authorization": f"Bearer {creds.token}"}
+    except Exception as e:
+        logger.warning(f"Could not get auth token: {e}")
+        return {}
+
+
+def download_slide_image(presentation_id: str, page_id: str, slide_index: int, job_dir: Path) -> Optional[str]:
     """
     Download slide thumbnail using Google Slides API thumbnail endpoint.
     Returns local file path or None on failure.
     """
-    if not GOOGLE_API_KEY:
-        logger.warning("No API key; skipping image download")
-        return None
-    
     url = (
         f"https://slides.googleapis.com/v1/presentations/{presentation_id}"
-        f"/pages/{slide_index + 1}/thumbnail"
-        f"?key={GOOGLE_API_KEY}"
-        f"&thumbnailProperties.thumbnailSize=LARGE"
+        f"/pages/{page_id}/thumbnail"
+        f"?thumbnailProperties.thumbnailSize=LARGE"
     )
-    
+
     try:
-        resp = requests.get(url, timeout=30)
+        headers = _get_auth_headers()
+        resp = requests.get(url, headers=headers, timeout=30)
         resp.raise_for_status()
         data = resp.json()
         
@@ -298,7 +337,8 @@ def _process_slide(
         })
     
     # Download slide image
-    image_path = download_slide_image(presentation_id, slide_index, job_dir)
+    page_id = slide.get("objectId", str(slide_index + 1))
+    image_path = download_slide_image(presentation_id, page_id, slide_index, job_dir)
     image_b64 = image_to_base64(image_path) if image_path else None
     
     # Extract speaker notes

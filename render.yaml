@@ -2,12 +2,18 @@ services:
   - type: web
     name: slides-to-sim-api
     env: python
-    buildCommand: "cd backend && pip install -r requirements.txt && python -m playwright install chromium"
+    region: oregon
+    plan: free
+    buildCommand: >
+      cd backend &&
+      pip install -r requirements.txt &&
+      python -m playwright install --with-deps chromium
     startCommand: "cd backend && uvicorn main:app --host 0.0.0.0 --port $PORT"
     envVars:
       - key: GEMINI_API_KEY
         sync: false
-      - key: GOOGLE_API_KEY
+      # Paste the entire contents of your service-account JSON as the value
+      - key: GOOGLE_SERVICE_ACCOUNT_JSON_CONTENT
         sync: false
       - key: OUTPUT_DIR
         value: /tmp/output
