@@ -12,8 +12,22 @@ const ERROR_REWORK_COST  = 150;
 
 // ── Types ─────────────────────────────────────────────────────────
 
-interface HubStat   { hub: string; sessions: number; avgPCT: number; avgPKRT: number; avgPauses: number; iPER: number; }
-interface ProcStat  { process: string; sessions: number; avgPCT: number; avgPKRT: number; avgPauses: number; iPER: number; byHub: HubStat[]; }
+interface ProcStat {
+  process: string; sessions: number;
+  avgPCT: number; avgPKRT: number; avgPauses: number; iPER: number;
+}
+
+interface AsmResult {
+  id: string; email: string; assessment_id: string;
+  score: number; passed: boolean; answers: Record<string, string> | null;
+  attempt_count: number; completed_at: string;
+  assessments: { process_name: string | null; title: string } | null;
+}
+
+interface AsmQuestion {
+  id: string; assessment_id: string; question: string;
+  correct_key: string; options: Record<string, string>;
+}
 
 // ── Helpers ───────────────────────────────────────────────────────
 
@@ -28,7 +42,7 @@ const card = (title: string, children: React.ReactNode, extra?: React.ReactNode)
 );
 
 const empty = (msg = 'No data yet') => (
-  <div style={{ height: 200, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#bbb', fontSize: 13 }}>{msg}</div>
+  <div style={{ height: 180, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#bbb', fontSize: 13, textAlign: 'center', padding: '0 20px' }}>{msg}</div>
 );
 
 const sectionLabel = (label: string) => (
@@ -44,13 +58,15 @@ const toggleBtn = (label: string, active: boolean, onClick: () => void) => (
 // ── Main ──────────────────────────────────────────────────────────
 
 export default function ReportsPage() {
-  const [allSessions, setAllSessions] = useState<CaptainSession[]>([]);
-  const [profiles,    setProfiles]    = useState<AgentProfile[]>([]);
-  const [processStats,setProcessStats]= useState<ProcStat[]>([]);
-  const [hubFilter,   setHubFilter]   = useState('');
-  const [expandedProc,setExpandedProc]= useState<string | null>(null);
-  const [qfdRange,    setQfdRange]    = useState<'daily'|'weekly'|'monthly'>('daily');
-  const [loading,     setLoading]     = useState(true);
+  const [allSessions,  setAllSessions]  = useState<CaptainSession[]>([]);
+  const [profiles,     setProfiles]     = useState<AgentProfile[]>([]);
+  const [processStats, setProcessStats] = useState<ProcStat[]>([]);
+  const [asmResults,   setAsmResults]   = useState<AsmResult[]>([]);
+  const [asmQuestions, setAsmQuestions] = useState<AsmQuestion[]>([]);
+  const [hubFilter,    setHubFilter]    = useState('');
+  const [procFilter,   setProcFilter]   = useState('');
+  const [qfdRange,     setQfdRange]     = useState<'daily'|'weekly'|'monthly'>('daily');
+  const [loading,      setLoading]      = useState(true);
 
   // ── Load ─────────────────────────────────────────────────────────
 
@@ -58,45 +74,36 @@ export default function ReportsPage() {
     Promise.all([
       supabase.from('captain_sessions').select('*').order('completed_at', { ascending: false }).limit(500),
       supabase.from('agent_profiles').select('*').eq('role', 'Captain'),
-      supabase.from('gamification_events').select('xp_amount,created_at').eq('event_type','xp_earned')
-        .gte('created_at', new Date(Date.now() - 14 * 86400000).toISOString()),
-    ]).then(([sessRes, profRes]) => {
+      supabase.from('assessment_results').select('*, assessments(process_name, title)').order('completed_at', { ascending: false }).limit(1000),
+      supabase.from('assessment_questions').select('*'),
+    ]).then(([sessRes, profRes, asmRes, qRes]) => {
       const sessions = sessRes.data || [];
       const profs    = profRes.data || [];
       setAllSessions(sessions);
       setProfiles(profs);
+      setAsmResults((asmRes.data || []) as AsmResult[]);
+      setAsmQuestions((qRes.data || []) as AsmQuestion[]);
 
-      // Process × Hub breakdown
-      type HubAgg = { count: number; totalPCT: number; totalPKRT: number; totalPauses: number; totalErrors: number };
-      const procHub: Record<string, Record<string, HubAgg>> = {};
-      const emailToHub: Record<string, string> = {};
-      profs.forEach((p: any) => { emailToHub[p.email] = p.hub || 'Unknown'; });
-
+      // Process stats (global, no hub expansion needed)
+      type Agg = { count: number; totalPCT: number; totalPKRT: number; totalPauses: number; totalErrors: number };
+      const proc: Record<string, Agg> = {};
       sessions.forEach(s => {
-        const proc = s.process_name || 'Unknown';
-        const hub  = emailToHub[s.email] || 'Unknown';
-        if (!procHub[proc])      procHub[proc] = {};
-        if (!procHub[proc][hub]) procHub[proc][hub] = { count: 0, totalPCT: 0, totalPKRT: 0, totalPauses: 0, totalErrors: 0 };
-        procHub[proc][hub].count++;
-        procHub[proc][hub].totalPCT    += s.pct          || 0;
-        procHub[proc][hub].totalPKRT   += s.total_pkrt   || 0;
-        procHub[proc][hub].totalPauses += s.pause_count  || 0;
-        procHub[proc][hub].totalErrors += s.error_count  || 0;
+        const p = s.process_name || 'Unknown';
+        if (!proc[p]) proc[p] = { count: 0, totalPCT: 0, totalPKRT: 0, totalPauses: 0, totalErrors: 0 };
+        proc[p].count++;
+        proc[p].totalPCT    += s.pct         || 0;
+        proc[p].totalPKRT   += s.total_pkrt  || 0;
+        proc[p].totalPauses += s.pause_count || 0;
+        proc[p].totalErrors += s.error_count || 0;
       });
-
-      const stats: ProcStat[] = Object.entries(procHub).map(([process, hubs]) => {
-        const agg = Object.values(hubs).reduce(
-          (a, h) => ({ count: a.count+h.count, totalPCT: a.totalPCT+h.totalPCT, totalPKRT: a.totalPKRT+h.totalPKRT, totalPauses: a.totalPauses+h.totalPauses, totalErrors: a.totalErrors+h.totalErrors }),
-          { count: 0, totalPCT: 0, totalPKRT: 0, totalPauses: 0, totalErrors: 0 }
-        );
-        const iPER  = agg.count > 0 ? agg.totalErrors / agg.count : 0;
-        const byHub = Object.entries(hubs).map(([hub, d]) => {
-          const hi  = d.count > 0 ? d.totalErrors / d.count : 0;
-          const hap = d.count > 0 ? d.totalPauses / d.count : 0;
-          return { hub, sessions: d.count, avgPCT: d.count>0?d.totalPCT/d.count:0, avgPKRT: d.count>0?d.totalPKRT/d.count:0, avgPauses: hap, iPER: hi };
-        }).sort((a,b) => b.sessions - a.sessions);
-        return { process, sessions: agg.count, avgPCT: agg.count>0?agg.totalPCT/agg.count:0, avgPKRT: agg.count>0?agg.totalPKRT/agg.count:0, avgPauses: agg.count>0?agg.totalPauses/agg.count:0, iPER, byHub };
-      }).sort((a,b) => b.sessions - a.sessions);
+      const stats: ProcStat[] = Object.entries(proc).map(([process, d]) => ({
+        process,
+        sessions:   d.count,
+        avgPCT:     d.count > 0 ? d.totalPCT    / d.count : 0,
+        avgPKRT:    d.count > 0 ? d.totalPKRT   / d.count : 0,
+        avgPauses:  d.count > 0 ? d.totalPauses / d.count : 0,
+        iPER:       d.count > 0 ? d.totalErrors / d.count : 0,
+      })).sort((a,b) => b.sessions - a.sessions);
       setProcessStats(stats);
       setLoading(false);
     });
@@ -104,21 +111,28 @@ export default function ReportsPage() {
 
   // ── Memos ─────────────────────────────────────────────────────────
 
-  const allHubs = useMemo(() => [...new Set(profiles.map((p:any) => p.hub).filter(Boolean))], [profiles]);
+  const emailToHub = useMemo(() => {
+    const m: Record<string, string> = {};
+    profiles.forEach((p: any) => { m[p.email] = p.hub || 'Unknown'; });
+    return m;
+  }, [profiles]);
 
-  const filteredStats = useMemo(() => {
-    if (!hubFilter) return processStats;
-    return processStats.map(ps => {
-      const h = ps.byHub.find(b => b.hub === hubFilter);
-      if (!h) return null;
-      return { ...ps, sessions: h.sessions, avgPCT: h.avgPCT, avgPKRT: h.avgPKRT, avgPauses: h.avgPauses, iPER: h.iPER };
-    }).filter(Boolean) as ProcStat[];
-  }, [processStats, hubFilter]);
+  const allHubs  = useMemo(() => [...new Set(profiles.map((p: any) => p.hub).filter(Boolean))].sort() as string[], [profiles]);
+  const allProcs = useMemo(() => [...new Set(allSessions.map(s => s.process_name).filter(Boolean))].sort() as string[], [allSessions]);
+
+  // Filtered sessions (shared across PCT/PKRT/iPER and QFD sections)
+  const filteredSessions = useMemo(() =>
+    allSessions.filter(s => {
+      const hubOk  = !hubFilter  || emailToHub[s.email] === hubFilter;
+      const procOk = !procFilter || s.process_name === procFilter;
+      return hubOk && procOk;
+    }),
+  [allSessions, hubFilter, procFilter, emailToHub]);
 
   // PCT + PKRT 7-day trend
   const pctPkrtTrend = useMemo(() => {
     const byDay: Record<string, { pct: number; pkrt: number; count: number }> = {};
-    allSessions.forEach(s => {
+    filteredSessions.forEach(s => {
       if (!s.completed_at) return;
       const key = new Date(s.completed_at).toLocaleDateString('en-IN', { month: 'short', day: 'numeric' });
       if (!byDay[key]) byDay[key] = { pct: 0, pkrt: 0, count: 0 };
@@ -131,30 +145,45 @@ export default function ReportsPage() {
       pct:  Math.round(v.pct  / v.count / 60 * 10) / 10,
       pkrt: Math.round(v.pkrt / v.count),
     }));
-  }, [allSessions]);
+  }, [filteredSessions]);
+
+  // iPER trend
+  const iperTrend = useMemo(() => {
+    const byDay: Record<string, { errors: number; count: number }> = {};
+    filteredSessions.forEach(s => {
+      if (!s.completed_at) return;
+      const key = new Date(s.completed_at).toLocaleDateString('en-IN', { month: 'short', day: 'numeric' });
+      if (!byDay[key]) byDay[key] = { errors: 0, count: 0 };
+      byDay[key].errors += s.error_count || 0;
+      byDay[key].count++;
+    });
+    return Object.entries(byDay).slice(-7).map(([day, v]) => ({
+      day, iper: +(v.errors / v.count).toFixed(2),
+    }));
+  }, [filteredSessions]);
 
   // Diagnostic — QFD + iPER 4-state matrix
   const diagnostic = useMemo(() => {
-    if (allSessions.length < 4) return null;
-    const sorted = [...allSessions].sort((a,b) => new Date(a.completed_at).getTime() - new Date(b.completed_at).getTime());
-    const half   = Math.floor(sorted.length / 2);
-    const early  = sorted.slice(0, half);
-    const recent = sorted.slice(half);
-    const avgQ  = (arr: CaptainSession[]) => arr.reduce((s,x) => s+(x.pause_count||0),0)/arr.length;
-    const avgE  = (arr: CaptainSession[]) => arr.reduce((s,x) => s+(x.error_count||0),0)/arr.length;
-    const qfdDecaying = avgQ(recent) < avgQ(early) * 0.85;
-    const iperDecaying = avgE(recent) < avgE(early) * 0.85;
-    const iperRising   = avgE(recent) > avgE(early) * 1.1;
-    if (qfdDecaying && iperDecaying)  return { color:'#22c55e', label:'✅ Resolution Working',   detail:'QFD decaying + iPER falling — knowledge gap closing. Captains reaching operational independence.' };
-    if (qfdDecaying && !iperDecaying) return { color:'#f59e0b', label:'⚡ Execution Gap',         detail:'QFD is falling (doubt cleared) but iPER remains high — wrong actions taken post-resolution. Content is fine; focus on execution coaching.' };
-    if (!qfdDecaying && iperRising)   return { color:'#ef4444', label:'📚 Content Gap',           detail:'QFD flat + iPER rising — Jarvis is not resolving issues. Review process SOPs and sim content.' };
-    return                                   { color:'#9747FF', label:'⚠️ Adoption Problem',      detail:'QFD flat + iPER flat — captains are not using Jarvis for resolution. Push adoption of the knowledge tool.' };
-  }, [allSessions]);
+    if (filteredSessions.length < 4) return null;
+    const sorted = [...filteredSessions].sort((a,b) => new Date(a.completed_at).getTime() - new Date(b.completed_at).getTime());
+    const half  = Math.floor(sorted.length / 2);
+    const early = sorted.slice(0, half);
+    const late  = sorted.slice(half);
+    const avgQ = (arr: CaptainSession[]) => arr.reduce((s,x) => s+(x.pause_count||0),0)/arr.length;
+    const avgE = (arr: CaptainSession[]) => arr.reduce((s,x) => s+(x.error_count||0),0)/arr.length;
+    const qfdDecaying  = avgQ(late) < avgQ(early) * 0.85;
+    const iperDecaying = avgE(late) < avgE(early) * 0.85;
+    const iperRising   = avgE(late) > avgE(early) * 1.1;
+    if (qfdDecaying && iperDecaying)  return { color:'#22c55e', label:'✅ Resolution Working',  detail:'QFD decaying + iPER falling — knowledge gap closing. Captains reaching operational independence.' };
+    if (qfdDecaying && !iperDecaying) return { color:'#f59e0b', label:'⚡ Execution Gap',        detail:'QFD falling (doubt cleared) but iPER flat — wrong actions taken post-resolution. Content is fine; focus on execution coaching.' };
+    if (!qfdDecaying && iperRising)   return { color:'#ef4444', label:'📚 Content Gap',          detail:'QFD flat + iPER rising — Jarvis not resolving issues. Review SOPs and sim content.' };
+    return                                   { color:'#9747FF', label:'⚠️ Adoption Problem',     detail:'QFD flat + iPER flat — captains not using Jarvis for resolution. Push tool adoption.' };
+  }, [filteredSessions]);
 
-  // QFD trend — avg pauses per session (time-range aware)
+  // QFD trend — avg pauses/session (time-range aware, filtered)
   const qfdTrend = useMemo(() => {
     const bucket: Record<string, { pauses: number; count: number }> = {};
-    allSessions.forEach(s => {
+    filteredSessions.forEach(s => {
       if (!s.completed_at) return;
       const d = new Date(s.completed_at);
       const key = qfdRange === 'daily'
@@ -169,16 +198,16 @@ export default function ReportsPage() {
     return Object.entries(bucket).slice(-14).map(([period, v]) => ({
       period, qfd: +(v.pauses / v.count).toFixed(1)
     }));
-  }, [allSessions, qfdRange]);
+  }, [filteredSessions, qfdRange]);
 
-  // Per-process QFD bars — avg pauses (lower = better)
+  // Per-process QFD bars (always global — not filtered)
   const processQFDs = useMemo(() => processStats.map(ps => ({
     process: ps.process.length > 20 ? ps.process.slice(0,19)+'…' : ps.process,
     qfd: +ps.avgPauses.toFixed(1),
     fill: ps.avgPauses <= 1 ? '#22c55e' : ps.avgPauses <= 3 ? '#f59e0b' : '#ef4444',
   })), [processStats]);
 
-  // Cost metrics
+  // Cost metrics (global)
   const costData = useMemo(() => {
     if (!allSessions.length) return null;
     const totalLabor  = allSessions.reduce((s,x) => s + ((x.pct||0)/60)*LABOR_RATE_PER_MIN, 0);
@@ -196,35 +225,103 @@ export default function ReportsPage() {
     };
   }, [allSessions]);
 
-  // Level + QFD + PCT distributions
+  // Level distribution (global)
   const levelDist = useMemo(() => {
     const bands = [['1–3',1,3],['4–6',4,6],['7–9',7,9],['10–12',10,12],['13–15',13,15],['16–20',16,20]] as [string,number,number][];
     return bands.map(([range,min,max]) => ({ range, count: profiles.filter(p=>(p.level||1)>=min&&(p.level||1)<=max).length }));
   }, [profiles]);
 
-  // QFD distribution — pause count per session (lower = better)
-  const qfdDist = useMemo(() => {
-    const bands: [string, number, number][] = [['0',0,0],['1',1,1],['2–3',2,3],['4–5',4,5],['6+',6,9999]];
-    return bands.map(([band,min,max]) => ({
-      band,
-      count: allSessions.filter(s => (s.pause_count||0) >= min && (s.pause_count||0) <= max).length,
-      fill: min === 0 ? '#22c55e' : min <= 1 ? '#a3e635' : min <= 3 ? '#f59e0b' : '#ef4444',
-    }));
-  }, [allSessions]);
+  // ── Assessment memos ──────────────────────────────────────────────
 
-  const pctDist = useMemo(() => {
-    const bands:[string,number,number][] = [['<2m',0,120],['2–4m',120,240],['4–6m',240,360],['6–10m',360,600],['10–15m',600,900],['>15m',900,Infinity]];
-    return bands.map(([band,min,max]) => ({ band, count: allSessions.filter(s=>(s.pct||0)>min&&(s.pct||0)<=max).length }));
-  }, [allSessions]);
+  // Unique processes reached per hub
+  const processCoverage = useMemo(() => {
+    const hubProcs: Record<string, Set<string>> = {};
+    allSessions.forEach(s => {
+      const hub = emailToHub[s.email] || 'Unknown';
+      if (!hubProcs[hub]) hubProcs[hub] = new Set();
+      if (s.process_name) hubProcs[hub].add(s.process_name);
+    });
+    return Object.entries(hubProcs).map(([hub, procs]) => ({ hub, count: procs.size })).sort((a,b) => b.count - a.count);
+  }, [allSessions, emailToHub]);
+
+  // Assessment overview (respects hub + proc filter)
+  const assessmentOverview = useMemo(() => {
+    let results = asmResults;
+    if (hubFilter)  results = results.filter(r => emailToHub[r.email] === hubFilter);
+    if (procFilter) results = results.filter(r => r.assessments?.process_name === procFilter);
+    const total   = results.length;
+    const passed  = results.filter(r => r.passed).length;
+    const failed  = total - passed;
+    const captainsInScope = new Set(
+      profiles
+        .filter((p: any) => !hubFilter || (p as any).hub === hubFilter)
+        .map((p: any) => p.email)
+    );
+    const attempted   = new Set(results.map(r => r.email)).size;
+    const attemptRate = captainsInScope.size > 0 ? Math.round(attempted / captainsInScope.size * 100) : 0;
+    return {
+      total, passed, failed,
+      passRate:    total > 0 ? Math.round(passed/total*100) : 0,
+      failRate:    total > 0 ? Math.round(failed/total*100) : 0,
+      attemptRate,
+      attempted,
+      totalCaptains: captainsInScope.size,
+    };
+  }, [asmResults, hubFilter, procFilter, profiles, emailToHub]);
+
+  // Failed concepts (respects hub + proc filter)
+  const failedConcepts = useMemo(() => {
+    let results = asmResults;
+    if (hubFilter)  results = results.filter(r => emailToHub[r.email] === hubFilter);
+    if (procFilter) results = results.filter(r => r.assessments?.process_name === procFilter);
+
+    const qMap: Record<string, AsmQuestion> = {};
+    asmQuestions.forEach(q => { qMap[q.id] = q; });
+
+    const tally: Record<string, { question: string; fails: number; total: number }> = {};
+    results.forEach(r => {
+      if (!r.answers) return;
+      Object.entries(r.answers).forEach(([qid, selected]) => {
+        const q = qMap[qid];
+        if (!q) return;
+        if (!tally[qid]) tally[qid] = { question: q.question, fails: 0, total: 0 };
+        tally[qid].total++;
+        if (selected !== q.correct_key) tally[qid].fails++;
+      });
+    });
+    return Object.values(tally)
+      .filter(f => f.total > 0)
+      .map(f => ({ ...f, failRate: Math.round(f.fails / f.total * 100) }))
+      .sort((a,b) => b.failRate - a.failRate)
+      .slice(0, 10);
+  }, [asmResults, asmQuestions, hubFilter, procFilter, emailToHub]);
 
   if (loading) return <AdminLayout title="Reports"><div style={{ padding:60, textAlign:'center', color:'#bbb' }}>Loading…</div></AdminLayout>;
 
   return (
     <AdminLayout title="Reports">
 
-      {/* ── 1. PCT + PKRT Analysis ── */}
-      {sectionLabel('PCT & PKRT Analysis')}
-      {card('Process Cycle Time & Knowledge Resolution Time — 7-Day Trend', (
+      {/* ── Shared Filters ── */}
+      <div style={{ background:'#fff', borderRadius:12, padding:'16px 20px', boxShadow:'0 1px 4px rgba(0,0,0,0.06)', marginBottom:20, display:'flex', gap:24, flexWrap:'wrap', alignItems:'flex-start' }}>
+        <div>
+          <div style={{ fontSize:10, fontWeight:700, color:'#aaa', textTransform:'uppercase', letterSpacing:0.5, marginBottom:6 }}>Hub</div>
+          <div style={{ display:'flex', gap:6, flexWrap:'wrap' }}>
+            {toggleBtn('All', hubFilter==='', () => setHubFilter(''))}
+            {allHubs.map(h => toggleBtn(h, hubFilter===h, () => setHubFilter(p => p===h?'':h)))}
+          </div>
+        </div>
+        <div style={{ borderLeft:'1px solid #f0f0f0', paddingLeft:24 }}>
+          <div style={{ fontSize:10, fontWeight:700, color:'#aaa', textTransform:'uppercase', letterSpacing:0.5, marginBottom:6 }}>Process</div>
+          <div style={{ display:'flex', gap:6, flexWrap:'wrap' }}>
+            {toggleBtn('All', procFilter==='', () => setProcFilter(''))}
+            {allProcs.map(p => toggleBtn(p.length>22?p.slice(0,20)+'…':p, procFilter===p, () => setProcFilter(prev => prev===p?'':p)))}
+          </div>
+        </div>
+      </div>
+
+      {/* ── 1. PCT + PKRT + iPER ── */}
+      {sectionLabel('PCT · PKRT · iPER Analysis')}
+      {card('Process Cycle Time · Knowledge Resolution Time · Error Rate — 7-Day Trend', (
         <>
           {diagnostic && (
             <div style={{ background:`${diagnostic.color}12`, border:`1.5px solid ${diagnostic.color}40`, borderRadius:10, padding:'10px 16px', marginBottom:20, display:'flex', gap:12, alignItems:'flex-start' }}>
@@ -232,11 +329,11 @@ export default function ReportsPage() {
               <div style={{ fontSize:12, color:'#555', lineHeight:1.5 }}>{diagnostic.detail}</div>
             </div>
           )}
-          <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:24 }}>
+          <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr 1fr', gap:20 }}>
             <div>
-              <div style={{ fontSize:11, fontWeight:600, color:'#888', marginBottom:10, textTransform:'uppercase', letterSpacing:0.4 }}>Avg PCT per day (minutes)</div>
+              <div style={{ fontSize:11, fontWeight:600, color:'#888', marginBottom:10, textTransform:'uppercase', letterSpacing:0.4 }}>Avg PCT (minutes)</div>
               {pctPkrtTrend.length > 0 ? (
-                <ResponsiveContainer width="100%" height={200}>
+                <ResponsiveContainer width="100%" height={180}>
                   <AreaChart data={pctPkrtTrend}>
                     <defs>
                       <linearGradient id="pctG" x1="0" y1="0" x2="0" y2="1">
@@ -254,9 +351,9 @@ export default function ReportsPage() {
               ) : empty()}
             </div>
             <div>
-              <div style={{ fontSize:11, fontWeight:600, color:'#888', marginBottom:10, textTransform:'uppercase', letterSpacing:0.4 }}>Avg PKRT per session (seconds paused)</div>
+              <div style={{ fontSize:11, fontWeight:600, color:'#888', marginBottom:10, textTransform:'uppercase', letterSpacing:0.4 }}>Avg PKRT (seconds paused)</div>
               {pctPkrtTrend.length > 0 ? (
-                <ResponsiveContainer width="100%" height={200}>
+                <ResponsiveContainer width="100%" height={180}>
                   <AreaChart data={pctPkrtTrend}>
                     <defs>
                       <linearGradient id="pkrtG" x1="0" y1="0" x2="0" y2="1">
@@ -273,9 +370,26 @@ export default function ReportsPage() {
                 </ResponsiveContainer>
               ) : empty()}
             </div>
-          </div>
-          <div style={{ marginTop:12, fontSize:11, color:'#aaa', borderTop:'1px solid #f0f0f0', paddingTop:10 }}>
-            ⓘ PCT benchmark = fleet avg PCT across hubs for same process. Delta flagging (hub vs benchmark) requires a <code>captain_pauses</code> table for per-pause query tracking.
+            <div>
+              <div style={{ fontSize:11, fontWeight:600, color:'#888', marginBottom:10, textTransform:'uppercase', letterSpacing:0.4 }}>Avg iPER (errors/session)</div>
+              {iperTrend.length > 0 ? (
+                <ResponsiveContainer width="100%" height={180}>
+                  <AreaChart data={iperTrend}>
+                    <defs>
+                      <linearGradient id="iperG" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="5%"  stopColor="#ef4444" stopOpacity={0.2}/>
+                        <stop offset="95%" stopColor="#ef4444" stopOpacity={0}/>
+                      </linearGradient>
+                    </defs>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0"/>
+                    <XAxis dataKey="day" tick={{ fontSize:10 }}/>
+                    <YAxis tick={{ fontSize:10 }}/>
+                    <Tooltip formatter={(v) => [`${v}`,'Avg iPER']}/>
+                    <Area type="monotone" dataKey="iper" stroke="#ef4444" fill="url(#iperG)" strokeWidth={2} dot={{ r:3 }}/>
+                  </AreaChart>
+                </ResponsiveContainer>
+              ) : empty()}
+            </div>
           </div>
         </>
       ))}
@@ -300,7 +414,7 @@ export default function ReportsPage() {
               ) : empty()}
             </div>
             <div>
-              <div style={{ fontSize:11, fontWeight:600, color:'#888', marginBottom:10, textTransform:'uppercase', letterSpacing:0.4 }}>Avg queries/session by process (↓ = better)</div>
+              <div style={{ fontSize:11, fontWeight:600, color:'#888', marginBottom:10, textTransform:'uppercase', letterSpacing:0.4 }}>Avg queries/session by process — global (↓ = better)</div>
               {processQFDs.length > 0 ? (
                 <ResponsiveContainer width="100%" height={200}>
                   <BarChart data={processQFDs} layout="vertical">
@@ -320,77 +434,123 @@ export default function ReportsPage() {
         </div>
       )}
 
-      {/* ── 3. Process × Hub Performance table ── */}
-      {sectionLabel('Process Performance by Hub')}
-      {allHubs.length > 0 && (
-        <div style={{ display:'flex', gap:6, alignItems:'center', marginBottom:12, flexWrap:'wrap' }}>
-          <span style={{ fontSize:11, fontWeight:600, color:'#888', marginRight:4 }}>Hub:</span>
-          {toggleBtn('All', hubFilter==='', () => setHubFilter(''))}
-          {allHubs.map(h => toggleBtn(h, hubFilter===h, () => setHubFilter(p => p===h?'':h)))}
-        </div>
-      )}
+      {/* ── 3. Process Performance (Global) ── */}
+      {sectionLabel('Process Performance (Global)')}
       <div style={{ background:'#fff', borderRadius:12, boxShadow:'0 1px 4px rgba(0,0,0,0.06)', overflow:'hidden', marginBottom:20 }}>
         <table style={{ width:'100%', borderCollapse:'collapse', fontSize:12 }}>
           <thead>
             <tr style={{ background:'#f8f9fa' }}>
-              {['','Process','Sessions','Avg PCT','Avg PKRT','QFD','iPER'].map(h => (
-                <th key={h} style={{ padding:'9px 14px', textAlign:['Sessions','Avg PCT','Avg PKRT','QFD','iPER'].includes(h)?'center':'left', fontWeight:600, color:'#666', fontSize:11, textTransform:'uppercase', letterSpacing:0.3, whiteSpace:'nowrap' }}>{h}</th>
+              {['Process','Sessions','Avg PCT','Avg PKRT','QFD','iPER'].map(h => (
+                <th key={h} style={{ padding:'9px 14px', textAlign:h==='Process'?'left':'center', fontWeight:600, color:'#666', fontSize:11, textTransform:'uppercase', letterSpacing:0.3, whiteSpace:'nowrap' }}>{h}</th>
               ))}
             </tr>
           </thead>
           <tbody>
-            {filteredStats.length === 0 ? (
-              <tr><td colSpan={7} style={{ padding:40, textAlign:'center', color:'#bbb', fontSize:13 }}>No data yet</td></tr>
-            ) : filteredStats.map((ps, i) => {
-              const isExp  = expandedProc === ps.process;
-              const qCol   = ps.avgPauses <= 1 ? '#22c55e' : ps.avgPauses <= 3 ? '#f59e0b' : '#ef4444';
-              const iCol   = ps.iPER > 1 ? '#ef4444' : ps.iPER > 0.5 ? '#f59e0b' : '#22c55e';
+            {processStats.length === 0 ? (
+              <tr><td colSpan={6} style={{ padding:40, textAlign:'center', color:'#bbb', fontSize:13 }}>No data yet</td></tr>
+            ) : processStats.map((ps, i) => {
+              const qCol = ps.avgPauses <= 1 ? '#22c55e' : ps.avgPauses <= 3 ? '#f59e0b' : '#ef4444';
+              const iCol = ps.iPER > 1 ? '#ef4444' : ps.iPER > 0.5 ? '#f59e0b' : '#22c55e';
               return (
-                <>
-                  <tr key={ps.process} onClick={() => setExpandedProc(isExp?null:ps.process)}
-                    style={{ borderBottom:'1px solid #f0f0f0', background:i%2===0?'#fff':'#fafafa', cursor:'pointer' }}>
-                    <td style={{ padding:'10px 14px', width:24, color:'#aaa', fontSize:10 }}>{isExp?'▼':'▶'}</td>
-                    <td style={{ padding:'10px 14px', fontWeight:600, color:'#1a1a2e', maxWidth:220, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{ps.process}</td>
-                    <td style={{ padding:'10px 14px', textAlign:'center', color:'#555' }}>{ps.sessions}</td>
-                    <td style={{ padding:'10px 14px', textAlign:'center', color:'#555' }}>{ps.avgPCT>0?`${(ps.avgPCT/60).toFixed(1)}m`:'—'}</td>
-                    <td style={{ padding:'10px 14px', textAlign:'center', color:'#555' }}>{ps.avgPKRT>0?`${Math.round(ps.avgPKRT)}s`:'—'}</td>
-                    <td style={{ padding:'10px 14px', textAlign:'center', fontWeight:700, color:qCol }}>{ps.avgPauses.toFixed(1)}</td>
-                    <td style={{ padding:'10px 14px', textAlign:'center', fontWeight:700, color:iCol }}>{ps.iPER.toFixed(2)}</td>
-                  </tr>
-                  {isExp && !hubFilter && ps.byHub.map(h => {
-                    const hQ = h.avgPauses<=1?'#22c55e':h.avgPauses<=3?'#f59e0b':'#ef4444';
-                    const hI = h.iPER>1?'#ef4444':h.iPER>0.5?'#f59e0b':'#22c55e';
-                    return (
-                      <tr key={`${ps.process}-${h.hub}`} style={{ background:'#f0f4ff', borderBottom:'1px solid #e8eaed' }}>
-                        <td/>
-                        <td style={{ padding:'8px 14px 8px 28px', color:'#555', fontSize:11 }}>
-                          <span style={{ display:'inline-block', width:8, height:8, borderRadius:'50%', background:'#9747FF', marginRight:6 }}/>
-                          {h.hub}
-                        </td>
-                        <td style={{ padding:'8px 14px', textAlign:'center', color:'#777', fontSize:11 }}>{h.sessions}</td>
-                        <td style={{ padding:'8px 14px', textAlign:'center', color:'#777', fontSize:11 }}>{h.avgPCT>0?`${(h.avgPCT/60).toFixed(1)}m`:'—'}</td>
-                        <td style={{ padding:'8px 14px', textAlign:'center', color:'#777', fontSize:11 }}>{h.avgPKRT>0?`${Math.round(h.avgPKRT)}s`:'—'}</td>
-                        <td style={{ padding:'8px 14px', textAlign:'center', fontWeight:700, fontSize:11, color:hQ }}>{h.avgPauses.toFixed(1)}</td>
-                        <td style={{ padding:'8px 14px', textAlign:'center', fontWeight:700, fontSize:11, color:hI }}>{h.iPER.toFixed(2)}</td>
-                      </tr>
-                    );
-                  })}
-                </>
+                <tr key={ps.process} style={{ borderBottom:'1px solid #f0f0f0', background:i%2===0?'#fff':'#fafafa' }}>
+                  <td style={{ padding:'10px 14px', fontWeight:600, color:'#1a1a2e', maxWidth:240, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{ps.process}</td>
+                  <td style={{ padding:'10px 14px', textAlign:'center', color:'#555' }}>{ps.sessions}</td>
+                  <td style={{ padding:'10px 14px', textAlign:'center', color:'#555' }}>{ps.avgPCT>0?`${(ps.avgPCT/60).toFixed(1)}m`:'—'}</td>
+                  <td style={{ padding:'10px 14px', textAlign:'center', color:'#555' }}>{ps.avgPKRT>0?`${Math.round(ps.avgPKRT)}s`:'—'}</td>
+                  <td style={{ padding:'10px 14px', textAlign:'center', fontWeight:700, color:qCol }}>{ps.avgPauses.toFixed(1)}</td>
+                  <td style={{ padding:'10px 14px', textAlign:'center', fontWeight:700, color:iCol }}>{ps.iPER.toFixed(2)}</td>
+                </tr>
               );
             })}
           </tbody>
         </table>
       </div>
 
-      {/* ── 4. Cost Metrics ── */}
+      {/* ── 4. Distribution Metrics ── */}
+      {sectionLabel('Distribution Metrics')}
+
+      {/* Row 1: Process coverage + Assessment overview */}
+      <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:20, marginBottom:20 }}>
+        {card('Process Coverage by Hub', processCoverage.length > 0 ? (
+          <ResponsiveContainer width="100%" height={200}>
+            <BarChart data={processCoverage} layout="vertical">
+              <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" horizontal={false}/>
+              <XAxis type="number" tick={{ fontSize:10 }} allowDecimals={false}/>
+              <YAxis type="category" dataKey="hub" tick={{ fontSize:10 }} width={100}/>
+              <Tooltip formatter={(v) => [v,'Unique Processes']}/>
+              <Bar dataKey="count" fill="#9747FF" radius={[0,4,4,0]}/>
+            </BarChart>
+          </ResponsiveContainer>
+        ) : empty('No session data yet'))}
+
+        {card('Assessment Overview', (
+          <>
+            <div style={{ display:'grid', gridTemplateColumns:'repeat(3,1fr)', gap:12, marginBottom:16 }}>
+              {[
+                { label:'Pass Rate',    value:`${assessmentOverview.passRate}%`,    color:'#22c55e', sub:`${assessmentOverview.passed} passed` },
+                { label:'Fail Rate',   value:`${assessmentOverview.failRate}%`,    color:'#ef4444', sub:`${assessmentOverview.failed} failed` },
+                { label:'Attempt Rate',value:`${assessmentOverview.attemptRate}%`, color:'#9747FF', sub:`${assessmentOverview.attempted}/${assessmentOverview.totalCaptains} captains` },
+              ].map(c => (
+                <div key={c.label} style={{ background:'#f8f9fa', borderRadius:10, padding:'12px 14px', textAlign:'center' }}>
+                  <div style={{ fontSize:11, color:'#888', marginBottom:4 }}>{c.label}</div>
+                  <div style={{ fontSize:24, fontWeight:800, color:c.color }}>{c.value}</div>
+                  <div style={{ fontSize:10, color:'#aaa', marginTop:2 }}>{c.sub}</div>
+                </div>
+              ))}
+            </div>
+            <div style={{ fontSize:11, color:'#aaa', textAlign:'center' }}>
+              {assessmentOverview.total} total attempts
+              {hubFilter  ? ` · Hub: ${hubFilter}`  : ''}
+              {procFilter ? ` · Process: ${procFilter}` : ''}
+            </div>
+          </>
+        ))}
+      </div>
+
+      {/* Row 2: Failed concepts + Level dist */}
+      <div style={{ display:'grid', gridTemplateColumns:'2fr 1fr', gap:20, marginBottom:20 }}>
+        {card('Failed Concepts — Top 10 by Fail Rate', failedConcepts.length > 0 ? (
+          <div style={{ display:'flex', flexDirection:'column', gap:8 }}>
+            {failedConcepts.map((f, i) => (
+              <div key={i} style={{ display:'flex', alignItems:'center', gap:10 }}>
+                <div style={{ width:22, fontSize:10, color:'#aaa', textAlign:'right', flexShrink:0 }}>#{i+1}</div>
+                <div style={{ flex:1, fontSize:11, color:'#333', lineHeight:1.3, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>
+                  {f.question}
+                </div>
+                <div style={{ display:'flex', alignItems:'center', gap:8, flexShrink:0 }}>
+                  <div style={{ width:80, height:6, background:'#f0f0f0', borderRadius:3, overflow:'hidden' }}>
+                    <div style={{ width:`${f.failRate}%`, height:'100%', background:f.failRate>50?'#ef4444':f.failRate>30?'#f59e0b':'#22c55e', borderRadius:3 }}/>
+                  </div>
+                  <div style={{ fontSize:11, fontWeight:700, color:f.failRate>50?'#ef4444':f.failRate>30?'#f59e0b':'#22c55e', width:36 }}>{f.failRate}%</div>
+                  <div style={{ fontSize:10, color:'#aaa', width:40 }}>{f.fails}/{f.total}</div>
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : empty('No assessment data yet — create assessments and have captains attempt them'))}
+
+        {card('Captain Level Distribution', (
+          <ResponsiveContainer width="100%" height={190}>
+            <BarChart data={levelDist}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0"/>
+              <XAxis dataKey="range" tick={{ fontSize:10 }}/>
+              <YAxis tick={{ fontSize:10 }} allowDecimals={false}/>
+              <Tooltip formatter={(v) => [v,'Captains']}/>
+              <Bar dataKey="count" fill="#F43397" radius={[4,4,0,0]}/>
+            </BarChart>
+          </ResponsiveContainer>
+        ))}
+      </div>
+
+      {/* ── 5. Cost Metrics ── */}
       {sectionLabel('Cost Metrics')}
       {costData ? (
         <>
           <div style={{ display:'grid', gridTemplateColumns:'repeat(3,1fr)', gap:16, marginBottom:20 }}>
             {[
-              { label:'Total Labor Cost',   value:`₹${costData.totalLabor.toLocaleString()}`,   sub:'PCT × ₹4/min',   color:'#0ea5e9' },
-              { label:'Total Rework Cost',  value:`₹${costData.totalRework.toLocaleString()}`,  sub:'Errors × ₹150',  color:'#ef4444' },
-              { label:'Avg Cost / Session', value:`₹${costData.avgPerSession}`,                 sub:'Labor + rework',  color:'#9747FF' },
+              { label:'Total Labor Cost',   value:`₹${costData.totalLabor.toLocaleString()}`,   sub:'PCT × ₹4/min',  color:'#0ea5e9' },
+              { label:'Total Rework Cost',  value:`₹${costData.totalRework.toLocaleString()}`,  sub:'Errors × ₹150', color:'#ef4444' },
+              { label:'Avg Cost / Session', value:`₹${costData.avgPerSession}`,                 sub:'Labor + rework', color:'#9747FF' },
             ].map(c => (
               <div key={c.label} style={{ background:'#fff', borderRadius:12, padding:'16px 20px', boxShadow:'0 1px 4px rgba(0,0,0,0.06)' }}>
                 <div style={{ fontSize:11, color:'#888', marginBottom:4 }}>{c.label}</div>
@@ -416,46 +576,6 @@ export default function ReportsPage() {
           No session data to calculate costs yet
         </div>
       )}
-
-      {/* ── 5. Distribution Metrics ── */}
-      {sectionLabel('Distribution Metrics')}
-      <div style={{ display:'grid', gridTemplateColumns:'repeat(3,1fr)', gap:20, marginBottom:20 }}>
-        {card('QFD — Queries per Session Distribution', qfdDist.some(d=>d.count>0) ? (
-          <ResponsiveContainer width="100%" height={190}>
-            <BarChart data={qfdDist}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0"/>
-              <XAxis dataKey="band" tick={{ fontSize:10 }}/>
-              <YAxis tick={{ fontSize:10 }} allowDecimals={false}/>
-              <Tooltip formatter={(v) => [v,'Sessions']}/>
-              <Bar dataKey="count" fill="fill" radius={[4,4,0,0]}/>
-            </BarChart>
-          </ResponsiveContainer>
-        ) : empty())}
-
-        {card('PCT Distribution', pctDist.some(d=>d.count>0) ? (
-          <ResponsiveContainer width="100%" height={190}>
-            <BarChart data={pctDist}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0"/>
-              <XAxis dataKey="band" tick={{ fontSize:10 }}/>
-              <YAxis tick={{ fontSize:10 }} allowDecimals={false}/>
-              <Tooltip formatter={(v) => [v,'Sessions']}/>
-              <Bar dataKey="count" fill="#9747FF" radius={[4,4,0,0]}/>
-            </BarChart>
-          </ResponsiveContainer>
-        ) : empty())}
-
-        {card('Captain Level Distribution', (
-          <ResponsiveContainer width="100%" height={190}>
-            <BarChart data={levelDist}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0"/>
-              <XAxis dataKey="range" tick={{ fontSize:10 }}/>
-              <YAxis tick={{ fontSize:10 }} allowDecimals={false}/>
-              <Tooltip formatter={(v) => [v,'Captains']}/>
-              <Bar dataKey="count" fill="#F43397" radius={[4,4,0,0]}/>
-            </BarChart>
-          </ResponsiveContainer>
-        ))}
-      </div>
 
     </AdminLayout>
   );
