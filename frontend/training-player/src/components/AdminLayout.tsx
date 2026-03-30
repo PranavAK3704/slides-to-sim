@@ -3,16 +3,17 @@ import Link from 'next/link';
 import { useRouter } from 'next/router';
 import {
   LayoutDashboard, Users, BookOpen, BarChart3,
-  Settings, LogOut, Zap, Loader
+  Settings, LogOut, Zap, Loader, ClipboardList
 } from 'lucide-react';
 import { useAdminAuth } from '@/hooks/useAdminAuth';
 
 const NAV = [
-  { href: '/admin',           label: 'Dashboard',  icon: LayoutDashboard },
-  { href: '/admin/agents',    label: 'Captains',   icon: Users           },
-  { href: '/admin/content',   label: 'Content',    icon: BookOpen        },
-  { href: '/admin/reports',   label: 'Reports',    icon: BarChart3       },
-  { href: '/admin/settings',  label: 'Settings',   icon: Settings, adminOnly: true },
+  { href: '/admin',                label: 'Dashboard',   icon: LayoutDashboard },
+  { href: '/admin/agents',         label: 'Captains',    icon: Users           },
+  { href: '/admin/content',        label: 'Content',     icon: BookOpen        },
+  { href: '/admin/assessments',    label: 'Assessments', icon: ClipboardList   },
+  { href: '/admin/reports',        label: 'Reports',     icon: BarChart3       },
+  { href: '/admin/settings',       label: 'Settings',    icon: Settings, adminOnly: true },
 ];
 
 interface Props {
