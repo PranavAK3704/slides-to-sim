@@ -19,6 +19,7 @@ import os
 import sys
 import uuid
 import json
+import sqlite3
 import asyncio
 import logging
 from pathlib import Path
@@ -70,17 +71,99 @@ OUTPUT_DIR.mkdir(exist_ok=True)
 # Serve slide images and step screenshots
 app.mount("/static", StaticFiles(directory=str(OUTPUT_DIR)), name="static")
 
-# In-memory stores (Phase 8 migrates to SQLite)
-jobs: dict[str, dict] = {}
+# ── SQLite job store (survives restarts) ──────────────────────────────────────
+DB_PATH = OUTPUT_DIR / "jobs.db"
+
+def _init_db():
+    con = sqlite3.connect(DB_PATH)
+    con.execute("""
+        CREATE TABLE IF NOT EXISTS jobs (
+            job_id       TEXT PRIMARY KEY,
+            status       TEXT,
+            progress     INTEGER,
+            current_phase TEXT,
+            slides_url   TEXT,
+            target_url   TEXT,
+            simulation_id TEXT,
+            error        TEXT,
+            created_at   TEXT
+        )
+    """)
+    con.commit()
+    con.close()
+
+_init_db()
+
+def _job_to_dict(row) -> dict:
+    keys = ["job_id","status","progress","current_phase","slides_url","target_url","simulation_id","error","created_at"]
+    return dict(zip(keys, row))
+
+def _load_job(job_id: str) -> Optional[dict]:
+    con = sqlite3.connect(DB_PATH)
+    row = con.execute("SELECT * FROM jobs WHERE job_id=?", (job_id,)).fetchone()
+    con.close()
+    return _job_to_dict(row) if row else None
+
+def _save_job(job: dict):
+    con = sqlite3.connect(DB_PATH)
+    con.execute("""
+        INSERT OR REPLACE INTO jobs
+        (job_id,status,progress,current_phase,slides_url,target_url,simulation_id,error,created_at)
+        VALUES (?,?,?,?,?,?,?,?,?)
+    """, (
+        job["job_id"], job["status"], job["progress"], job["current_phase"],
+        job.get("slides_url"), job.get("target_url"), job.get("simulation_id"),
+        job.get("error"), job.get("created_at"),
+    ))
+    con.commit()
+    con.close()
+
+# ── Supabase client (optional — only if env vars set) ─────────────────────────
+_sb = None
+def _get_supabase():
+    global _sb
+    if _sb is None:
+        url  = os.getenv("SUPABASE_URL")
+        key  = os.getenv("SUPABASE_SERVICE_KEY") or os.getenv("SUPABASE_ANON_KEY")
+        if url and key:
+            try:
+                from supabase import create_client
+                _sb = create_client(url, key)
+            except Exception as e:
+                logger.warning(f"Supabase init failed: {e}")
+    return _sb
+
+def _push_sim_to_supabase(sim_config: dict, process_name: str = None, hub: str = None):
+    sb = _get_supabase()
+    if not sb:
+        return
+    try:
+        sb.table("simulations").upsert({
+            "id":           sim_config["id"],
+            "title":        sim_config.get("title", "Untitled"),
+            "process_name": process_name,
+            "hub":          hub,
+            "step_count":   sim_config.get("stepCount", len(sim_config.get("steps", []))),
+            "steps_json":   sim_config.get("steps", []),
+            "created_by":   "pipeline",
+            "created_at":   sim_config.get("createdAt", datetime.utcnow().isoformat()),
+        }).execute()
+        logger.info(f"Sim {sim_config['id']} pushed to Supabase")
+    except Exception as e:
+        logger.error(f"Supabase push failed: {e}")
+
+# In-memory cache (populated from SQLite on demand)
 simulations: dict[str, dict] = {}
 
 
 # ─── Request Models ───────────────────────────────────────────────────────────
 
 class GenerateRequest(BaseModel):
-    slides_url: str
-    target_url: Optional[str] = None
-    options: Optional[dict] = {}
+    slides_url:   str
+    target_url:   Optional[str] = None
+    process_name: Optional[str] = None
+    hub:          Optional[str] = None
+    options:      Optional[dict] = {}
 
 
 # ─── Path → URL Helpers ───────────────────────────────────────────────────────
@@ -111,11 +194,13 @@ def annotate_step_urls(workflow: dict) -> None:
 # ─── Pipeline ─────────────────────────────────────────────────────────────────
 
 def update_job(job_id: str, **kwargs):
-    if job_id in jobs:
-        jobs[job_id].update(kwargs)
+    job = _load_job(job_id)
+    if job:
+        job.update(kwargs)
+        _save_job(job)
 
 
-def run_pipeline(job_id: str, slides_url: str, target_url: Optional[str]):
+def run_pipeline(job_id: str, slides_url: str, target_url: Optional[str], process_name: str = None, hub: str = None):
     """Run the full pipeline in a background thread."""
     try:
         # Phase 1: Slide Ingestion
@@ -161,6 +246,9 @@ def run_pipeline(job_id: str, slides_url: str, target_url: Optional[str]):
         with open(sim_path, "w") as f:
             json.dump(sim_config, f, indent=2)
 
+        # Push to Supabase so frontend content page shows it immediately
+        _push_sim_to_supabase(sim_config, process_name, hub)
+
         update_job(job_id, status="complete", progress=100,
                    current_phase="Done", simulation_id=sim_id)
         logger.info(f"Job {job_id} → Simulation {sim_id} complete")
@@ -180,27 +268,29 @@ def health():
 @app.post("/api/generate")
 def generate(request: GenerateRequest, background_tasks: BackgroundTasks):
     job_id = str(uuid.uuid4())[:8]
-    jobs[job_id] = {
-        "job_id": job_id,
-        "status": "pending",
-        "progress": 0,
+    job = {
+        "job_id":        job_id,
+        "status":        "pending",
+        "progress":      0,
         "current_phase": "Queued",
-        "slides_url": request.slides_url,
-        "target_url": request.target_url,
+        "slides_url":    request.slides_url,
+        "target_url":    request.target_url,
         "simulation_id": None,
-        "error": None,
-        "created_at": datetime.utcnow().isoformat(),
+        "error":         None,
+        "created_at":    datetime.utcnow().isoformat(),
     }
-    background_tasks.add_task(run_pipeline, job_id, request.slides_url, request.target_url)
+    _save_job(job)
+    background_tasks.add_task(run_pipeline, job_id, request.slides_url, request.target_url, request.process_name, request.hub)
     logger.info(f"Created job {job_id}")
-    return jobs[job_id]
+    return job
 
 
 @app.get("/api/jobs/{job_id}")
 def get_job(job_id: str):
-    if job_id not in jobs:
+    job = _load_job(job_id)
+    if not job:
         raise HTTPException(status_code=404, detail="Job not found")
-    return jobs[job_id]
+    return job
 
 
 @app.get("/api/simulations/{sim_id}")

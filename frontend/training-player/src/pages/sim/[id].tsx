@@ -1,13 +1,14 @@
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useRouter } from "next/router";
 import Head from "next/head";
+import { supabase } from "@/lib/supabase";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   ChevronRight, ChevronLeft, CheckCircle2, AlertCircle,
   BookOpen, GraduationCap, X, Lightbulb, MousePointer,
   Type, ChevronDown, Navigation, Eye, Volume2, VolumeX,
 } from "lucide-react";
-import type { SimulationConfig, SimulationStep, PlayerMode, Hotspot } from "@/types";
+import type { SimulationConfig, SimulationStep, PlayerMode } from "@/types";
 
 // ─── Hindi TTS via Web Speech API ────────────────────────────────────────────
 
@@ -58,6 +59,9 @@ export default function SimulationPlayer() {
   const [narrating, setNarrating] = useState(false);
   const [startTime] = useState(Date.now());
 
+  // Email: from query param → localStorage → anonymous
+  const email = (router.query.email as string) || (typeof window !== 'undefined' ? localStorage.getItem('valmo_user_email') || '' : '');
+
   useEffect(() => {
     if (!id) return;
     fetch(`${API_URL}/api/simulations/${id}`)
@@ -83,8 +87,7 @@ export default function SimulationPlayer() {
   if (loading) return <LoadingScreen />;
   if (error || !sim) return <ErrorScreen error={error} />;
   if (finished) return (
-    <FinishedScreen sim={sim} completedSteps={completedSteps}
-      wrongClicks={wrongClicks} startTime={startTime} />
+    <FinishedScreen sim={sim} wrongClicks={wrongClicks} startTime={startTime} email={email} />
   );
 
   const step = sim.steps[currentStep];
@@ -587,18 +590,44 @@ function ErrorScreen({ error }: { error: string }) {
 }
 
 function FinishedScreen({
-  sim, completedSteps, wrongClicks, startTime,
+  sim, wrongClicks, startTime, email,
 }: {
   sim: SimulationConfig;
-  completedSteps: Set<number>;
   wrongClicks: number;
   startTime: number;
+  email: string;
 }) {
   const router = useRouter();
   const elapsed = Math.round((Date.now() - startTime) / 1000);
   const mins = Math.floor(elapsed / 60);
   const secs = elapsed % 60;
   const score = Math.max(0, 100 - wrongClicks * 10);
+
+  // Write completion to Supabase once on mount
+  useEffect(() => {
+    if (!email || !sim.id) return;
+    const xp = score >= 90 ? 100 : score >= 70 ? 60 : 30;
+    Promise.all([
+      supabase.from('sim_completions').upsert({
+        email,
+        sim_id:       sim.id,
+        process_name: sim.title,
+        score,
+        mode:         'practice',
+        time_seconds: elapsed,
+        completed_at: new Date().toISOString(),
+      }, { onConflict: 'email,sim_id', ignoreDuplicates: false }),
+      supabase.from('gamification_events').insert({
+        email,
+        event_type:   'xp_earned',
+        xp_amount:    xp,
+        reason:       `Completed sim: ${sim.title}`,
+        process_name: sim.title,
+        created_at:   new Date().toISOString(),
+      }),
+    ]).catch(console.error);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   return (
     <div className="min-h-screen bg-[#0a0a14] flex items-center justify-center px-4">

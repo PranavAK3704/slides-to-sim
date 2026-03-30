@@ -12,8 +12,11 @@ services:
     envVars:
       - key: GEMINI_API_KEY
         sync: false
-      # Paste the entire contents of your service-account JSON as the value
       - key: GOOGLE_SERVICE_ACCOUNT_JSON_CONTENT
+        sync: false
+      - key: SUPABASE_URL
+        value: https://wfnmltorfvaokqbzggkn.supabase.co
+      - key: SUPABASE_ANON_KEY
         sync: false
       - key: OUTPUT_DIR
         value: /tmp/output

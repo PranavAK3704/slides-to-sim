@@ -24,3 +24,6 @@ numpy>=1.26.4
 
 # DOM matching (optional — run: playwright install chromium)
 playwright==1.44.0
+
+# Supabase — persist sims + jobs
+supabase==2.5.0
