@@ -7,6 +7,19 @@ import {
 } from 'recharts';
 import { Users, Clock, Zap, Activity, AlertCircle, ShieldCheck } from 'lucide-react';
 
+// ── Types ────────────────────────────────────────────────────────
+
+interface HubStat {
+  hub: string; sessions: number;
+  avgPCT: number; avgPKRT: number; qfd: number; iPER: number;
+}
+
+interface ProcessStat {
+  process: string; sessions: number;
+  avgPCT: number; avgPKRT: number; qfd: number; iPER: number;
+  byHub: HubStat[];
+}
+
 // ── Helpers ──────────────────────────────────────────────────────
 
 function fmtPCT(seconds: number) {
@@ -89,6 +102,9 @@ export default function AdminDashboard() {
   const [liveActivity, setLiveActivity] = useState<CaptainSession[]>([]);
   const [pctTrend, setPctTrend]       = useState<{ day: string; pct: number }[]>([]);
   const [knowledgeGaps, setKnowledgeGaps] = useState<{ process: string; pauses: number; sessions: number }[]>([]);
+  const [processStats, setProcessStats] = useState<ProcessStat[]>([]);
+  const [expandedProcess, setExpandedProcess] = useState<string | null>(null);
+  const [processPanelOpen, setProcessPanelOpen] = useState(true);
   const [loading, setLoading]         = useState(true);
   const [lastUpdated, setLastUpdated] = useState<Date>(new Date());
 
@@ -141,6 +157,35 @@ export default function AdminDashboard() {
           .sort((a, b) => (b.pauses / b.sessions) - (a.pauses / a.sessions))
           .slice(0, 6)
       );
+
+      // ── Process × Hub breakdown ────────────────────────────────
+      type HubAgg = { count: number; totalPCT: number; totalPKRT: number; totalErrors: number };
+      const procHub: Record<string, Record<string, HubAgg>> = {};
+      recentRes.data.forEach(s => {
+        const proc    = s.process_name || 'Unknown';
+        const profile = profilesRes.data?.find((p: AgentProfile) => p.email === s.email);
+        const hub     = (profile as any)?.hub || 'Unknown';
+        if (!procHub[proc])       procHub[proc] = {};
+        if (!procHub[proc][hub])  procHub[proc][hub] = { count: 0, totalPCT: 0, totalPKRT: 0, totalErrors: 0 };
+        procHub[proc][hub].count++;
+        procHub[proc][hub].totalPCT    += s.pct          || 0;
+        procHub[proc][hub].totalPKRT   += s.total_pkrt   || 0;
+        procHub[proc][hub].totalErrors += s.error_count  || 0;
+      });
+
+      const stats: ProcessStat[] = Object.entries(procHub).map(([process, hubs]) => {
+        const agg = Object.values(hubs).reduce(
+          (acc, h) => ({ count: acc.count + h.count, totalPCT: acc.totalPCT + h.totalPCT, totalPKRT: acc.totalPKRT + h.totalPKRT, totalErrors: acc.totalErrors + h.totalErrors }),
+          { count: 0, totalPCT: 0, totalPKRT: 0, totalErrors: 0 }
+        );
+        const iPER = agg.count > 0 ? agg.totalErrors / agg.count : 0;
+        const byHub: HubStat[] = Object.entries(hubs).map(([hub, d]) => {
+          const hi = d.count > 0 ? d.totalErrors / d.count : 0;
+          return { hub, sessions: d.count, avgPCT: d.count > 0 ? d.totalPCT / d.count : 0, avgPKRT: d.count > 0 ? d.totalPKRT / d.count : 0, qfd: Math.max(0, Math.round((1 - hi * 0.1) * 100)), iPER: hi };
+        }).sort((a, b) => b.sessions - a.sessions);
+        return { process, sessions: agg.count, avgPCT: agg.count > 0 ? agg.totalPCT / agg.count : 0, avgPKRT: agg.count > 0 ? agg.totalPKRT / agg.count : 0, qfd: Math.max(0, Math.round((1 - iPER * 0.1) * 100)), iPER, byHub };
+      }).sort((a, b) => b.sessions - a.sessions);
+      setProcessStats(stats);
     }
 
     setLastUpdated(new Date());
@@ -238,6 +283,81 @@ export default function AdminDashboard() {
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: 14 }}>
             {hubs.map(h => <HubCard key={h.hub} hub={h} />)}
           </div>
+        </section>
+      )}
+
+      {/* Process Performance table */}
+      {processStats.length > 0 && (
+        <section style={{ marginBottom: 28 }}>
+          <div
+            onClick={() => setProcessPanelOpen(o => !o)}
+            style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', cursor: 'pointer', marginBottom: processPanelOpen ? 12 : 0 }}>
+            <h2 style={{ fontSize: 14, fontWeight: 700, color: '#1a1a2e', textTransform: 'uppercase', letterSpacing: 0.5, margin: 0 }}>
+              Process Performance — All Hubs (Last 30 days)
+            </h2>
+            <span style={{ fontSize: 12, color: '#aaa' }}>{processPanelOpen ? '▲ collapse' : '▼ expand'}</span>
+          </div>
+
+          {processPanelOpen && (
+            <div style={{ background: '#fff', borderRadius: 12, boxShadow: '0 1px 4px rgba(0,0,0,0.06)', overflow: 'hidden' }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+                <thead>
+                  <tr style={{ background: '#f8f9fa' }}>
+                    {['', 'Process', 'Sessions', 'Avg PCT', 'Avg PKRT', 'QFD', 'iPER'].map(h => (
+                      <th key={h} style={{ padding: '9px 14px', textAlign: h === 'Sessions' || h === 'Avg PCT' || h === 'Avg PKRT' || h === 'QFD' || h === 'iPER' ? 'center' : 'left', fontWeight: 600, color: '#666', fontSize: 11, textTransform: 'uppercase', letterSpacing: 0.3, whiteSpace: 'nowrap' }}>{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {processStats.map((ps, i) => {
+                    const isExpanded = expandedProcess === ps.process;
+                    const qfdCol = ps.qfd >= 90 ? '#22c55e' : ps.qfd >= 70 ? '#f59e0b' : '#ef4444';
+                    const iperCol = ps.iPER > 1 ? '#ef4444' : ps.iPER > 0.5 ? '#f59e0b' : '#22c55e';
+                    return (
+                      <>
+                        <tr
+                          key={ps.process}
+                          onClick={() => setExpandedProcess(isExpanded ? null : ps.process)}
+                          style={{ borderBottom: '1px solid #f0f0f0', background: i % 2 === 0 ? '#fff' : '#fafafa', cursor: 'pointer' }}
+                        >
+                          <td style={{ padding: '10px 14px', width: 24, color: '#aaa', fontSize: 10 }}>
+                            {isExpanded ? '▼' : '▶'}
+                          </td>
+                          <td style={{ padding: '10px 14px', fontWeight: 600, color: '#1a1a2e', maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                            {ps.process}
+                          </td>
+                          <td style={{ padding: '10px 14px', textAlign: 'center', color: '#555' }}>{ps.sessions}</td>
+                          <td style={{ padding: '10px 14px', textAlign: 'center', color: '#555' }}>{ps.avgPCT > 0 ? `${(ps.avgPCT / 60).toFixed(1)}m` : '—'}</td>
+                          <td style={{ padding: '10px 14px', textAlign: 'center', color: '#555' }}>{ps.avgPKRT > 0 ? `${Math.round(ps.avgPKRT)}s` : '—'}</td>
+                          <td style={{ padding: '10px 14px', textAlign: 'center', fontWeight: 700, color: qfdCol }}>{ps.qfd}%</td>
+                          <td style={{ padding: '10px 14px', textAlign: 'center', fontWeight: 700, color: iperCol }}>{ps.iPER.toFixed(2)}</td>
+                        </tr>
+
+                        {isExpanded && ps.byHub.map(h => {
+                          const hQfdCol  = h.qfd >= 90 ? '#22c55e' : h.qfd >= 70 ? '#f59e0b' : '#ef4444';
+                          const hIperCol = h.iPER > 1 ? '#ef4444' : h.iPER > 0.5 ? '#f59e0b' : '#22c55e';
+                          return (
+                            <tr key={`${ps.process}-${h.hub}`} style={{ background: '#f0f4ff', borderBottom: '1px solid #e8eaed' }}>
+                              <td />
+                              <td style={{ padding: '8px 14px 8px 28px', color: '#555', fontSize: 11 }}>
+                                <span style={{ display: 'inline-block', width: 8, height: 8, borderRadius: '50%', background: '#9747FF', marginRight: 6 }} />
+                                {h.hub}
+                              </td>
+                              <td style={{ padding: '8px 14px', textAlign: 'center', color: '#777', fontSize: 11 }}>{h.sessions}</td>
+                              <td style={{ padding: '8px 14px', textAlign: 'center', color: '#777', fontSize: 11 }}>{h.avgPCT > 0 ? `${(h.avgPCT / 60).toFixed(1)}m` : '—'}</td>
+                              <td style={{ padding: '8px 14px', textAlign: 'center', color: '#777', fontSize: 11 }}>{h.avgPKRT > 0 ? `${Math.round(h.avgPKRT)}s` : '—'}</td>
+                              <td style={{ padding: '8px 14px', textAlign: 'center', fontWeight: 700, fontSize: 11, color: hQfdCol }}>{h.qfd}%</td>
+                              <td style={{ padding: '8px 14px', textAlign: 'center', fontWeight: 700, fontSize: 11, color: hIperCol }}>{h.iPER.toFixed(2)}</td>
+                            </tr>
+                          );
+                        })}
+                      </>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
         </section>
       )}
 
