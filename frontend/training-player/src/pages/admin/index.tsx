@@ -91,8 +91,8 @@ export default function AdminDashboard() {
   const activeLast24 = captains.filter(p => p.last_active && (Date.now() - new Date(p.last_active).getTime()) < 86400000);
   const avgPCT       = sessions.length > 0 ? sessions.reduce((s, x) => s + (x.pct || 0), 0) / sessions.length : 0;
   const totalXP      = captains.reduce((s, p) => s + (p.total_xp || 0), 0);
-  const avgErrors    = sessions.length > 0 ? sessions.reduce((s, x) => s + (x.error_count || 0), 0) / sessions.length : 0;
-  const avgQFD       = sessions.length > 0 ? Math.max(0, Math.round((1 - avgErrors * 0.1) * 100)) : null;
+  const avgErrors    = sessions.length > 0 ? sessions.reduce((s, x) => s + (x.error_count  || 0), 0) / sessions.length : 0;
+  const avgQFD       = sessions.length > 0 ? sessions.reduce((s, x) => s + (x.pause_count || 0), 0) / sessions.length : null;
   const avgIPER      = sessions.length > 0 ? avgErrors.toFixed(1) : null;
 
   const toReports = () => router.push('/admin/reports');
@@ -120,7 +120,7 @@ export default function AdminDashboard() {
 
       {/* KPI row 2 */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 16, marginBottom: 28 }}>
-        <StatCard icon={ShieldCheck} label="Avg QFD Today"       value={avgQFD !== null ? `${avgQFD}%` : '—'} sub="→ view trend in Reports" color="#22c55e" onClick={toReports} />
+        <StatCard icon={ShieldCheck} label="Avg Queries/Session"  value={avgQFD !== null ? avgQFD.toFixed(1) : '—'} sub="→ view decay in Reports" color="#22c55e" onClick={toReports} />
         <StatCard icon={AlertCircle} label="Avg iPER Today"      value={avgIPER ?? '—'}            sub="errors per session"      color="#ef4444" />
         <StatCard icon={Zap}         label="Total XP (All Time)" value={totalXP.toLocaleString()}  sub={`${captains.length} captains`} color="#f59e0b" />
       </div>

@@ -12,8 +12,8 @@ const ERROR_REWORK_COST  = 150;
 
 // ── Types ─────────────────────────────────────────────────────────
 
-interface HubStat   { hub: string; sessions: number; avgPCT: number; avgPKRT: number; qfd: number; iPER: number; }
-interface ProcStat  { process: string; sessions: number; avgPCT: number; avgPKRT: number; qfd: number; iPER: number; byHub: HubStat[]; }
+interface HubStat   { hub: string; sessions: number; avgPCT: number; avgPKRT: number; avgPauses: number; iPER: number; }
+interface ProcStat  { process: string; sessions: number; avgPCT: number; avgPKRT: number; avgPauses: number; iPER: number; byHub: HubStat[]; }
 
 // ── Helpers ───────────────────────────────────────────────────────
 
@@ -67,7 +67,7 @@ export default function ReportsPage() {
       setProfiles(profs);
 
       // Process × Hub breakdown
-      type HubAgg = { count: number; totalPCT: number; totalPKRT: number; totalErrors: number };
+      type HubAgg = { count: number; totalPCT: number; totalPKRT: number; totalPauses: number; totalErrors: number };
       const procHub: Record<string, Record<string, HubAgg>> = {};
       const emailToHub: Record<string, string> = {};
       profs.forEach((p: any) => { emailToHub[p.email] = p.hub || 'Unknown'; });
@@ -76,24 +76,26 @@ export default function ReportsPage() {
         const proc = s.process_name || 'Unknown';
         const hub  = emailToHub[s.email] || 'Unknown';
         if (!procHub[proc])      procHub[proc] = {};
-        if (!procHub[proc][hub]) procHub[proc][hub] = { count: 0, totalPCT: 0, totalPKRT: 0, totalErrors: 0 };
+        if (!procHub[proc][hub]) procHub[proc][hub] = { count: 0, totalPCT: 0, totalPKRT: 0, totalPauses: 0, totalErrors: 0 };
         procHub[proc][hub].count++;
-        procHub[proc][hub].totalPCT    += s.pct         || 0;
-        procHub[proc][hub].totalPKRT   += s.total_pkrt  || 0;
-        procHub[proc][hub].totalErrors += s.error_count || 0;
+        procHub[proc][hub].totalPCT    += s.pct          || 0;
+        procHub[proc][hub].totalPKRT   += s.total_pkrt   || 0;
+        procHub[proc][hub].totalPauses += s.pause_count  || 0;
+        procHub[proc][hub].totalErrors += s.error_count  || 0;
       });
 
       const stats: ProcStat[] = Object.entries(procHub).map(([process, hubs]) => {
         const agg = Object.values(hubs).reduce(
-          (a, h) => ({ count: a.count+h.count, totalPCT: a.totalPCT+h.totalPCT, totalPKRT: a.totalPKRT+h.totalPKRT, totalErrors: a.totalErrors+h.totalErrors }),
-          { count: 0, totalPCT: 0, totalPKRT: 0, totalErrors: 0 }
+          (a, h) => ({ count: a.count+h.count, totalPCT: a.totalPCT+h.totalPCT, totalPKRT: a.totalPKRT+h.totalPKRT, totalPauses: a.totalPauses+h.totalPauses, totalErrors: a.totalErrors+h.totalErrors }),
+          { count: 0, totalPCT: 0, totalPKRT: 0, totalPauses: 0, totalErrors: 0 }
         );
         const iPER  = agg.count > 0 ? agg.totalErrors / agg.count : 0;
         const byHub = Object.entries(hubs).map(([hub, d]) => {
-          const hi = d.count > 0 ? d.totalErrors / d.count : 0;
-          return { hub, sessions: d.count, avgPCT: d.count>0?d.totalPCT/d.count:0, avgPKRT: d.count>0?d.totalPKRT/d.count:0, qfd: Math.max(0,Math.round((1-hi*0.1)*100)), iPER: hi };
+          const hi  = d.count > 0 ? d.totalErrors / d.count : 0;
+          const hap = d.count > 0 ? d.totalPauses / d.count : 0;
+          return { hub, sessions: d.count, avgPCT: d.count>0?d.totalPCT/d.count:0, avgPKRT: d.count>0?d.totalPKRT/d.count:0, avgPauses: hap, iPER: hi };
         }).sort((a,b) => b.sessions - a.sessions);
-        return { process, sessions: agg.count, avgPCT: agg.count>0?agg.totalPCT/agg.count:0, avgPKRT: agg.count>0?agg.totalPKRT/agg.count:0, qfd: Math.max(0,Math.round((1-iPER*0.1)*100)), iPER, byHub };
+        return { process, sessions: agg.count, avgPCT: agg.count>0?agg.totalPCT/agg.count:0, avgPKRT: agg.count>0?agg.totalPKRT/agg.count:0, avgPauses: agg.count>0?agg.totalPauses/agg.count:0, iPER, byHub };
       }).sort((a,b) => b.sessions - a.sessions);
       setProcessStats(stats);
       setLoading(false);
@@ -109,7 +111,7 @@ export default function ReportsPage() {
     return processStats.map(ps => {
       const h = ps.byHub.find(b => b.hub === hubFilter);
       if (!h) return null;
-      return { ...ps, sessions: h.sessions, avgPCT: h.avgPCT, avgPKRT: h.avgPKRT, qfd: h.qfd, iPER: h.iPER };
+      return { ...ps, sessions: h.sessions, avgPCT: h.avgPCT, avgPKRT: h.avgPKRT, avgPauses: h.avgPauses, iPER: h.iPER };
     }).filter(Boolean) as ProcStat[];
   }, [processStats, hubFilter]);
 
@@ -131,41 +133,49 @@ export default function ReportsPage() {
     }));
   }, [allSessions]);
 
-  // Diagnostic
+  // Diagnostic — QFD + iPER 4-state matrix
   const diagnostic = useMemo(() => {
-    if (!allSessions.length) return null;
-    const avgPCTs  = allSessions.reduce((s,x) => s+(x.pct||0),0) / allSessions.length;
-    const avgPKRTs = allSessions.reduce((s,x) => s+(x.total_pkrt||0),0) / allSessions.length;
-    if (avgPCTs <= 300)               return { color:'#22c55e', label:'✅ On Track',        detail:'PCT is within acceptable range. Captains are executing efficiently.' };
-    if (avgPCTs > 300 && avgPKRTs < 60) return { color:'#f59e0b', label:'⚡ Execution Issue', detail:'PCT is high but PKRT is low — captains know the process but execute slowly. Consider SOP simplification or step sequencing.' };
-    return                                   { color:'#ef4444', label:'📚 Knowledge Gap',   detail:'PCT is high AND PKRT is high — captains pause frequently and spend long resolving queries. Assign targeted sims for these processes.' };
+    if (allSessions.length < 4) return null;
+    const sorted = [...allSessions].sort((a,b) => new Date(a.completed_at).getTime() - new Date(b.completed_at).getTime());
+    const half   = Math.floor(sorted.length / 2);
+    const early  = sorted.slice(0, half);
+    const recent = sorted.slice(half);
+    const avgQ  = (arr: CaptainSession[]) => arr.reduce((s,x) => s+(x.pause_count||0),0)/arr.length;
+    const avgE  = (arr: CaptainSession[]) => arr.reduce((s,x) => s+(x.error_count||0),0)/arr.length;
+    const qfdDecaying = avgQ(recent) < avgQ(early) * 0.85;
+    const iperDecaying = avgE(recent) < avgE(early) * 0.85;
+    const iperRising   = avgE(recent) > avgE(early) * 1.1;
+    if (qfdDecaying && iperDecaying)  return { color:'#22c55e', label:'✅ Resolution Working',   detail:'QFD decaying + iPER falling — knowledge gap closing. Captains reaching operational independence.' };
+    if (qfdDecaying && !iperDecaying) return { color:'#f59e0b', label:'⚡ Execution Gap',         detail:'QFD is falling (doubt cleared) but iPER remains high — wrong actions taken post-resolution. Content is fine; focus on execution coaching.' };
+    if (!qfdDecaying && iperRising)   return { color:'#ef4444', label:'📚 Content Gap',           detail:'QFD flat + iPER rising — Jarvis is not resolving issues. Review process SOPs and sim content.' };
+    return                                   { color:'#9747FF', label:'⚠️ Adoption Problem',      detail:'QFD flat + iPER flat — captains are not using Jarvis for resolution. Push adoption of the knowledge tool.' };
   }, [allSessions]);
 
-  // QFD trend (time-range aware)
+  // QFD trend — avg pauses per session (time-range aware)
   const qfdTrend = useMemo(() => {
-    const bucket: Record<string, { errors: number; count: number }> = {};
+    const bucket: Record<string, { pauses: number; count: number }> = {};
     allSessions.forEach(s => {
       if (!s.completed_at) return;
       const d = new Date(s.completed_at);
-      let key = qfdRange === 'daily'
+      const key = qfdRange === 'daily'
         ? d.toLocaleDateString('en-IN', { month:'short', day:'numeric' })
         : qfdRange === 'weekly'
           ? `W${Math.ceil(d.getDate()/7)} ${d.toLocaleDateString('en-IN',{month:'short'})}`
           : d.toLocaleDateString('en-IN', { month:'short', year:'2-digit' });
-      if (!bucket[key]) bucket[key] = { errors: 0, count: 0 };
-      bucket[key].errors += s.error_count || 0;
+      if (!bucket[key]) bucket[key] = { pauses: 0, count: 0 };
+      bucket[key].pauses += s.pause_count || 0;
       bucket[key].count++;
     });
     return Object.entries(bucket).slice(-14).map(([period, v]) => ({
-      period, qfd: Math.max(0, Math.round((1 - (v.errors/v.count)*0.1)*100))
+      period, qfd: +(v.pauses / v.count).toFixed(1)
     }));
   }, [allSessions, qfdRange]);
 
-  // Per-process QFD bars
+  // Per-process QFD bars — avg pauses (lower = better)
   const processQFDs = useMemo(() => processStats.map(ps => ({
     process: ps.process.length > 20 ? ps.process.slice(0,19)+'…' : ps.process,
-    qfd: ps.qfd,
-    fill: ps.qfd >= 90 ? '#22c55e' : ps.qfd >= 70 ? '#f59e0b' : '#ef4444',
+    qfd: +ps.avgPauses.toFixed(1),
+    fill: ps.avgPauses <= 1 ? '#22c55e' : ps.avgPauses <= 3 ? '#f59e0b' : '#ef4444',
   })), [processStats]);
 
   // Cost metrics
@@ -192,10 +202,14 @@ export default function ReportsPage() {
     return bands.map(([range,min,max]) => ({ range, count: profiles.filter(p=>(p.level||1)>=min&&(p.level||1)<=max).length }));
   }, [profiles]);
 
+  // QFD distribution — pause count per session (lower = better)
   const qfdDist = useMemo(() => {
-    const bands = [['<60%',0,59],['60–69',60,69],['70–79',70,79],['80–89',80,89],['90–99',90,99],['100%',100,100]] as [string,number,number][];
-    const qs = allSessions.map(s => Math.max(0,Math.round((1-(s.error_count||0)*0.1)*100)));
-    return bands.map(([band,min,max]) => ({ band, count: qs.filter(q=>q>=min&&q<=max).length, fill: max<=69?'#ef4444':max<=89?'#f59e0b':'#22c55e' }));
+    const bands: [string, number, number][] = [['0',0,0],['1',1,1],['2–3',2,3],['4–5',4,5],['6+',6,9999]];
+    return bands.map(([band,min,max]) => ({
+      band,
+      count: allSessions.filter(s => (s.pause_count||0) >= min && (s.pause_count||0) <= max).length,
+      fill: min === 0 ? '#22c55e' : min <= 1 ? '#a3e635' : min <= 3 ? '#f59e0b' : '#ef4444',
+    }));
   }, [allSessions]);
 
   const pctDist = useMemo(() => {
@@ -261,39 +275,39 @@ export default function ReportsPage() {
             </div>
           </div>
           <div style={{ marginTop:12, fontSize:11, color:'#aaa', borderTop:'1px solid #f0f0f0', paddingTop:10 }}>
-            ⓘ Per-pause query text is not stored yet — only total PKRT per session is synced. A <code>captain_pauses</code> table would enable per-query tracking.
+            ⓘ PCT benchmark = fleet avg PCT across hubs for same process. Delta flagging (hub vs benchmark) requires a <code>captain_pauses</code> table for per-pause query tracking.
           </div>
         </>
       ))}
 
       {/* ── 2. QFD Trend ── */}
-      {sectionLabel('QFD Trend')}
-      {card('Quality First Delivery — Trend & Per-Process Breakdown',
+      {sectionLabel('Query Frequency Decay (QFD)')}
+      {card('Avg Queries per Session — Decay Trend & Per-Process Breakdown',
         (
           <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:24 }}>
             <div>
-              <div style={{ fontSize:11, fontWeight:600, color:'#888', marginBottom:10, textTransform:'uppercase', letterSpacing:0.4 }}>Overall QFD over time</div>
+              <div style={{ fontSize:11, fontWeight:600, color:'#888', marginBottom:10, textTransform:'uppercase', letterSpacing:0.4 }}>Avg queries/session over time (↓ = improving)</div>
               {qfdTrend.length > 0 ? (
                 <ResponsiveContainer width="100%" height={200}>
                   <LineChart data={qfdTrend}>
                     <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0"/>
                     <XAxis dataKey="period" tick={{ fontSize:10 }}/>
-                    <YAxis domain={[0,100]} tick={{ fontSize:10 }} unit="%"/>
-                    <Tooltip formatter={(v) => [`${v}%`,'QFD']}/>
+                    <YAxis tick={{ fontSize:10 }} allowDecimals={false}/>
+                    <Tooltip formatter={(v) => [`${v} queries`,'Avg QFD']}/>
                     <Line type="monotone" dataKey="qfd" stroke="#22c55e" strokeWidth={2} dot={{ r:3 }}/>
                   </LineChart>
                 </ResponsiveContainer>
               ) : empty()}
             </div>
             <div>
-              <div style={{ fontSize:11, fontWeight:600, color:'#888', marginBottom:10, textTransform:'uppercase', letterSpacing:0.4 }}>Current QFD by process</div>
+              <div style={{ fontSize:11, fontWeight:600, color:'#888', marginBottom:10, textTransform:'uppercase', letterSpacing:0.4 }}>Avg queries/session by process (↓ = better)</div>
               {processQFDs.length > 0 ? (
                 <ResponsiveContainer width="100%" height={200}>
                   <BarChart data={processQFDs} layout="vertical">
                     <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" horizontal={false}/>
-                    <XAxis type="number" domain={[0,100]} tick={{ fontSize:10 }} unit="%"/>
+                    <XAxis type="number" tick={{ fontSize:10 }}/>
                     <YAxis type="category" dataKey="process" tick={{ fontSize:10 }} width={110}/>
-                    <Tooltip formatter={(v) => [`${v}%`,'QFD']}/>
+                    <Tooltip formatter={(v) => [`${v} queries`,'Avg QFD']}/>
                     <Bar dataKey="qfd" fill="fill" radius={[0,4,4,0]}/>
                   </BarChart>
                 </ResponsiveContainer>
@@ -329,8 +343,8 @@ export default function ReportsPage() {
               <tr><td colSpan={7} style={{ padding:40, textAlign:'center', color:'#bbb', fontSize:13 }}>No data yet</td></tr>
             ) : filteredStats.map((ps, i) => {
               const isExp  = expandedProc === ps.process;
-              const qCol   = ps.qfd  >= 90 ? '#22c55e' : ps.qfd  >= 70 ? '#f59e0b' : '#ef4444';
-              const iCol   = ps.iPER  > 1  ? '#ef4444' : ps.iPER  > 0.5 ? '#f59e0b' : '#22c55e';
+              const qCol   = ps.avgPauses <= 1 ? '#22c55e' : ps.avgPauses <= 3 ? '#f59e0b' : '#ef4444';
+              const iCol   = ps.iPER > 1 ? '#ef4444' : ps.iPER > 0.5 ? '#f59e0b' : '#22c55e';
               return (
                 <>
                   <tr key={ps.process} onClick={() => setExpandedProc(isExp?null:ps.process)}
@@ -340,11 +354,11 @@ export default function ReportsPage() {
                     <td style={{ padding:'10px 14px', textAlign:'center', color:'#555' }}>{ps.sessions}</td>
                     <td style={{ padding:'10px 14px', textAlign:'center', color:'#555' }}>{ps.avgPCT>0?`${(ps.avgPCT/60).toFixed(1)}m`:'—'}</td>
                     <td style={{ padding:'10px 14px', textAlign:'center', color:'#555' }}>{ps.avgPKRT>0?`${Math.round(ps.avgPKRT)}s`:'—'}</td>
-                    <td style={{ padding:'10px 14px', textAlign:'center', fontWeight:700, color:qCol }}>{ps.qfd}%</td>
+                    <td style={{ padding:'10px 14px', textAlign:'center', fontWeight:700, color:qCol }}>{ps.avgPauses.toFixed(1)}</td>
                     <td style={{ padding:'10px 14px', textAlign:'center', fontWeight:700, color:iCol }}>{ps.iPER.toFixed(2)}</td>
                   </tr>
                   {isExp && !hubFilter && ps.byHub.map(h => {
-                    const hQ = h.qfd>=90?'#22c55e':h.qfd>=70?'#f59e0b':'#ef4444';
+                    const hQ = h.avgPauses<=1?'#22c55e':h.avgPauses<=3?'#f59e0b':'#ef4444';
                     const hI = h.iPER>1?'#ef4444':h.iPER>0.5?'#f59e0b':'#22c55e';
                     return (
                       <tr key={`${ps.process}-${h.hub}`} style={{ background:'#f0f4ff', borderBottom:'1px solid #e8eaed' }}>
@@ -356,7 +370,7 @@ export default function ReportsPage() {
                         <td style={{ padding:'8px 14px', textAlign:'center', color:'#777', fontSize:11 }}>{h.sessions}</td>
                         <td style={{ padding:'8px 14px', textAlign:'center', color:'#777', fontSize:11 }}>{h.avgPCT>0?`${(h.avgPCT/60).toFixed(1)}m`:'—'}</td>
                         <td style={{ padding:'8px 14px', textAlign:'center', color:'#777', fontSize:11 }}>{h.avgPKRT>0?`${Math.round(h.avgPKRT)}s`:'—'}</td>
-                        <td style={{ padding:'8px 14px', textAlign:'center', fontWeight:700, fontSize:11, color:hQ }}>{h.qfd}%</td>
+                        <td style={{ padding:'8px 14px', textAlign:'center', fontWeight:700, fontSize:11, color:hQ }}>{h.avgPauses.toFixed(1)}</td>
                         <td style={{ padding:'8px 14px', textAlign:'center', fontWeight:700, fontSize:11, color:hI }}>{h.iPER.toFixed(2)}</td>
                       </tr>
                     );
@@ -406,7 +420,7 @@ export default function ReportsPage() {
       {/* ── 5. Distribution Metrics ── */}
       {sectionLabel('Distribution Metrics')}
       <div style={{ display:'grid', gridTemplateColumns:'repeat(3,1fr)', gap:20, marginBottom:20 }}>
-        {card('QFD Score Distribution', qfdDist.some(d=>d.count>0) ? (
+        {card('QFD — Queries per Session Distribution', qfdDist.some(d=>d.count>0) ? (
           <ResponsiveContainer width="100%" height={190}>
             <BarChart data={qfdDist}>
               <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0"/>
