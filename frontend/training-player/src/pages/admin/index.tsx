@@ -64,10 +64,10 @@ export default function AdminDashboard() {
   const [lastUpdated,  setLastUpdated]  = useState<Date>(new Date());
 
   const load = useCallback(async () => {
-    const today = new Date(); today.setHours(0, 0, 0, 0);
+    const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
     const [profilesRes, sessionsRes, recentRes] = await Promise.all([
       supabase.from('agent_profiles').select('*').eq('role', 'Captain'),
-      supabase.from('captain_sessions').select('*').gte('completed_at', today.toISOString()).order('completed_at', { ascending: false }),
+      supabase.from('captain_sessions').select('*').gte('completed_at', sevenDaysAgo.toISOString()).order('completed_at', { ascending: false }),
       supabase.from('captain_sessions').select('*').order('completed_at', { ascending: false }).limit(20),
     ]);
     if (profilesRes.data) setProfiles(profilesRes.data);
@@ -114,14 +114,14 @@ export default function AdminDashboard() {
       {/* KPI row 1 */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 16, marginBottom: 14 }}>
         <StatCard icon={Users}    label="Active Captains (24h)" value={activeLast24.length} sub={`${captains.length} total`}    color="#F43397" />
-        <StatCard icon={Activity} label="Sessions Today"         value={sessions.length}     sub="completed processes"           color="#9747FF" />
-        <StatCard icon={Clock}    label="Avg PCT Today"          value={avgPCT > 0 ? fmtPCT(Math.round(avgPCT)) : '—'} sub="→ view trend in Reports" color="#0ea5e9" onClick={toReports} />
+        <StatCard icon={Activity} label="Sessions (7d)"           value={sessions.length}     sub="completed processes"           color="#9747FF" />
+        <StatCard icon={Clock}    label="Avg PCT (7d)"           value={avgPCT > 0 ? fmtPCT(Math.round(avgPCT)) : '—'} sub="→ view trend in Reports" color="#0ea5e9" onClick={toReports} />
       </div>
 
       {/* KPI row 2 */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 16, marginBottom: 28 }}>
         <StatCard icon={ShieldCheck} label="Avg Queries/Session"  value={avgQFD !== null ? avgQFD.toFixed(1) : '—'} sub="→ view decay in Reports" color="#22c55e" onClick={toReports} />
-        <StatCard icon={AlertCircle} label="Avg iPER Today"      value={avgIPER ?? '—'}            sub="errors per session"      color="#ef4444" />
+        <StatCard icon={AlertCircle} label="Avg iPER (7d)"        value={avgIPER ?? '—'}            sub="errors per session"      color="#ef4444" />
         <StatCard icon={Zap}         label="Total XP (All Time)" value={totalXP.toLocaleString()}  sub={`${captains.length} captains`} color="#f59e0b" />
       </div>
 

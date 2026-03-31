@@ -5,6 +5,7 @@ import {
   AreaChart, Area, BarChart, Bar, LineChart, Line,
   XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid
 } from 'recharts';
+import { Search } from 'lucide-react';
 
 // ── Cost constants ────────────────────────────────────────────────
 const LABOR_RATE_PER_MIN = 4;
@@ -123,8 +124,8 @@ export default function ReportsPage() {
   // Filtered sessions (shared across PCT/PKRT/iPER and QFD sections)
   const filteredSessions = useMemo(() =>
     allSessions.filter(s => {
-      const hubOk  = !hubFilter  || emailToHub[s.email] === hubFilter;
-      const procOk = !procFilter || s.process_name === procFilter;
+      const hubOk  = !hubFilter  || (emailToHub[s.email] || '').toLowerCase().includes(hubFilter.toLowerCase());
+      const procOk = !procFilter || (s.process_name || '').toLowerCase().includes(procFilter.toLowerCase());
       return hubOk && procOk;
     }),
   [allSessions, hubFilter, procFilter, emailToHub]);
@@ -247,14 +248,14 @@ export default function ReportsPage() {
   // Assessment overview (respects hub + proc filter)
   const assessmentOverview = useMemo(() => {
     let results = asmResults;
-    if (hubFilter)  results = results.filter(r => emailToHub[r.email] === hubFilter);
-    if (procFilter) results = results.filter(r => r.assessments?.process_name === procFilter);
+    if (hubFilter)  results = results.filter(r => (emailToHub[r.email] || '').toLowerCase().includes(hubFilter.toLowerCase()));
+    if (procFilter) results = results.filter(r => (r.assessments?.process_name || '').toLowerCase().includes(procFilter.toLowerCase()));
     const total   = results.length;
     const passed  = results.filter(r => r.passed).length;
     const failed  = total - passed;
     const captainsInScope = new Set(
       profiles
-        .filter((p: any) => !hubFilter || (p as any).hub === hubFilter)
+        .filter((p: any) => !hubFilter || ((p as any).hub || '').toLowerCase().includes(hubFilter.toLowerCase()))
         .map((p: any) => p.email)
     );
     const attempted   = new Set(results.map(r => r.email)).size;
@@ -272,8 +273,8 @@ export default function ReportsPage() {
   // Failed concepts (respects hub + proc filter)
   const failedConcepts = useMemo(() => {
     let results = asmResults;
-    if (hubFilter)  results = results.filter(r => emailToHub[r.email] === hubFilter);
-    if (procFilter) results = results.filter(r => r.assessments?.process_name === procFilter);
+    if (hubFilter)  results = results.filter(r => (emailToHub[r.email] || '').toLowerCase().includes(hubFilter.toLowerCase()));
+    if (procFilter) results = results.filter(r => (r.assessments?.process_name || '').toLowerCase().includes(procFilter.toLowerCase()));
 
     const qMap: Record<string, AsmQuestion> = {};
     asmQuestions.forEach(q => { qMap[q.id] = q; });
@@ -302,19 +303,27 @@ export default function ReportsPage() {
     <AdminLayout title="Reports">
 
       {/* ── Shared Filters ── */}
-      <div style={{ background:'#fff', borderRadius:12, padding:'16px 20px', boxShadow:'0 1px 4px rgba(0,0,0,0.06)', marginBottom:20, display:'flex', gap:24, flexWrap:'wrap', alignItems:'flex-start' }}>
+      <div style={{ background:'#fff', borderRadius:12, padding:'16px 20px', boxShadow:'0 1px 4px rgba(0,0,0,0.06)', marginBottom:20, display:'flex', gap:20, flexWrap:'wrap', alignItems:'flex-end' }}>
         <div>
           <div style={{ fontSize:10, fontWeight:700, color:'#aaa', textTransform:'uppercase', letterSpacing:0.5, marginBottom:6 }}>Hub</div>
-          <div style={{ display:'flex', gap:6, flexWrap:'wrap' }}>
-            {toggleBtn('All', hubFilter==='', () => setHubFilter(''))}
-            {allHubs.map(h => toggleBtn(h, hubFilter===h, () => setHubFilter(p => p===h?'':h)))}
+          <div style={{ position:'relative' }}>
+            <Search size={13} style={{ position:'absolute', left:10, top:'50%', transform:'translateY(-50%)', color:'#9ca3af', pointerEvents:'none' }} />
+            <input
+              type="text" placeholder="Search hub…" value={hubFilter}
+              onChange={e => setHubFilter(e.target.value)}
+              style={{ padding:'7px 10px 7px 30px', border:'1px solid #e8eaed', borderRadius:8, fontSize:13, outline:'none', width:220, background:'#fff' }}
+            />
           </div>
         </div>
-        <div style={{ borderLeft:'1px solid #f0f0f0', paddingLeft:24 }}>
+        <div style={{ borderLeft:'1px solid #f0f0f0', paddingLeft:20 }}>
           <div style={{ fontSize:10, fontWeight:700, color:'#aaa', textTransform:'uppercase', letterSpacing:0.5, marginBottom:6 }}>Process</div>
-          <div style={{ display:'flex', gap:6, flexWrap:'wrap' }}>
-            {toggleBtn('All', procFilter==='', () => setProcFilter(''))}
-            {allProcs.map(p => toggleBtn(p.length>22?p.slice(0,20)+'…':p, procFilter===p, () => setProcFilter(prev => prev===p?'':p)))}
+          <div style={{ position:'relative' }}>
+            <Search size={13} style={{ position:'absolute', left:10, top:'50%', transform:'translateY(-50%)', color:'#9ca3af', pointerEvents:'none' }} />
+            <input
+              type="text" placeholder="Search process…" value={procFilter}
+              onChange={e => setProcFilter(e.target.value)}
+              style={{ padding:'7px 10px 7px 30px', border:'1px solid #e8eaed', borderRadius:8, fontSize:13, outline:'none', width:240, background:'#fff' }}
+            />
           </div>
         </div>
       </div>
