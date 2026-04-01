@@ -61,7 +61,6 @@ const toggleBtn = (label: string, active: boolean, onClick: () => void) => (
 export default function ReportsPage() {
   const [allSessions,  setAllSessions]  = useState<CaptainSession[]>([]);
   const [profiles,     setProfiles]     = useState<AgentProfile[]>([]);
-  const [processStats, setProcessStats] = useState<ProcStat[]>([]);
   const [asmResults,   setAsmResults]   = useState<AsmResult[]>([]);
   const [asmQuestions, setAsmQuestions] = useState<AsmQuestion[]>([]);
   const [hubFilter,    setHubFilter]    = useState('');
@@ -85,27 +84,6 @@ export default function ReportsPage() {
       setAsmResults((asmRes.data || []) as AsmResult[]);
       setAsmQuestions((qRes.data || []) as AsmQuestion[]);
 
-      // Process stats (global, no hub expansion needed)
-      type Agg = { count: number; totalPCT: number; totalPKRT: number; totalPauses: number; totalErrors: number };
-      const proc: Record<string, Agg> = {};
-      sessions.forEach(s => {
-        const p = s.process_name || 'Unknown';
-        if (!proc[p]) proc[p] = { count: 0, totalPCT: 0, totalPKRT: 0, totalPauses: 0, totalErrors: 0 };
-        proc[p].count++;
-        proc[p].totalPCT    += s.pct         || 0;
-        proc[p].totalPKRT   += s.total_pkrt  || 0;
-        proc[p].totalPauses += s.pause_count || 0;
-        proc[p].totalErrors += s.error_count || 0;
-      });
-      const stats: ProcStat[] = Object.entries(proc).map(([process, d]) => ({
-        process,
-        sessions:   d.count,
-        avgPCT:     d.count > 0 ? d.totalPCT    / d.count : 0,
-        avgPKRT:    d.count > 0 ? d.totalPKRT   / d.count : 0,
-        avgPauses:  d.count > 0 ? d.totalPauses / d.count : 0,
-        iPER:       d.count > 0 ? d.totalErrors / d.count : 0,
-      })).sort((a,b) => b.sessions - a.sessions);
-      setProcessStats(stats);
       setLoading(false);
     });
   }, []);
@@ -117,9 +95,6 @@ export default function ReportsPage() {
     profiles.forEach((p: any) => { m[p.email] = p.hub || 'Unknown'; });
     return m;
   }, [profiles]);
-
-  const allHubs  = useMemo(() => [...new Set(profiles.map((p: any) => p.hub).filter(Boolean))].sort() as string[], [profiles]);
-  const allProcs = useMemo(() => [...new Set(allSessions.map(s => s.process_name).filter(Boolean))].sort() as string[], [allSessions]);
 
   // Filtered sessions (shared across PCT/PKRT/iPER and QFD sections)
   const filteredSessions = useMemo(() =>
@@ -201,8 +176,31 @@ export default function ReportsPage() {
     }));
   }, [filteredSessions, qfdRange]);
 
-  // Per-process QFD bars (always global — not filtered)
-  const processQFDs = useMemo(() => processStats.map(ps => ({
+  // Per-process stats — recomputed whenever filters change
+  const processStats = useMemo<ProcStat[]>(() => {
+    type Agg = { count: number; totalPCT: number; totalPKRT: number; totalPauses: number; totalErrors: number };
+    const proc: Record<string, Agg> = {};
+    filteredSessions.forEach(s => {
+      const p = s.process_name || 'Unknown';
+      if (!proc[p]) proc[p] = { count: 0, totalPCT: 0, totalPKRT: 0, totalPauses: 0, totalErrors: 0 };
+      proc[p].count++;
+      proc[p].totalPCT    += s.pct         || 0;
+      proc[p].totalPKRT   += s.total_pkrt  || 0;
+      proc[p].totalPauses += s.pause_count || 0;
+      proc[p].totalErrors += s.error_count || 0;
+    });
+    return Object.entries(proc).map(([process, d]) => ({
+      process,
+      sessions:  d.count,
+      avgPCT:    d.count > 0 ? d.totalPCT    / d.count : 0,
+      avgPKRT:   d.count > 0 ? d.totalPKRT   / d.count : 0,
+      avgPauses: d.count > 0 ? d.totalPauses / d.count : 0,
+      iPER:      d.count > 0 ? d.totalErrors / d.count : 0,
+    })).sort((a, b) => b.sessions - a.sessions);
+  }, [filteredSessions]);
+
+  // Per-process QFD bars (respects filters via processStats)
+  const processQFDs = useMemo(() => processStats.map((ps: ProcStat) => ({
     process: ps.process.length > 20 ? ps.process.slice(0,19)+'…' : ps.process,
     qfd: +ps.avgPauses.toFixed(1),
     fill: ps.avgPauses <= 1 ? '#22c55e' : ps.avgPauses <= 3 ? '#f59e0b' : '#ef4444',
