@@ -65,8 +65,15 @@ export default function SimulationPlayer() {
   useEffect(() => {
     if (!id) return;
     fetch(`${API_URL}/api/simulations/${id}`)
-      .then(r => r.json())
-      .then(data => { setSim(data); setLoading(false); })
+      .then(r => {
+        if (!r.ok) throw new Error(`Simulation not found (${r.status})`);
+        return r.json();
+      })
+      .then(data => {
+        if (data.detail) throw new Error(data.detail);
+        setSim(data);
+        setLoading(false);
+      })
       .catch(e => { setError(e.message); setLoading(false); });
   }, [id]);
 
@@ -86,11 +93,15 @@ export default function SimulationPlayer() {
 
   if (loading) return <LoadingScreen />;
   if (error || !sim) return <ErrorScreen error={error} />;
+  if (!sim.steps || sim.steps.length === 0) return (
+    <ErrorScreen error="This simulation has no steps. The slides may not have contained any detectable instructions." />
+  );
   if (finished) return (
     <FinishedScreen sim={sim} wrongClicks={wrongClicks} startTime={startTime} email={email} />
   );
 
   const step = sim.steps[currentStep];
+  if (!step) return <ErrorScreen error="Step not found." />;
   const progress = (currentStep / sim.steps.length) * 100;
 
   return (
