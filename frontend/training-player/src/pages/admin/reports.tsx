@@ -72,7 +72,7 @@ export default function ReportsPage() {
 
   useEffect(() => {
     Promise.all([
-      supabase.from('captain_sessions').select('*').order('completed_at', { ascending: false }).limit(500),
+      supabase.from('captain_sessions').select('*').eq('session_role', 'captain').order('completed_at', { ascending: false }).limit(500),
       supabase.from('agent_profiles').select('*').eq('role', 'Captain'),
       supabase.from('assessment_results').select('*, assessments(process_name, title)').order('completed_at', { ascending: false }).limit(1000),
       supabase.from('assessment_questions').select('*'),

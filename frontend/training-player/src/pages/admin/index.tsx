@@ -67,8 +67,8 @@ export default function AdminDashboard() {
     const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
     const [profilesRes, sessionsRes, recentRes] = await Promise.all([
       supabase.from('agent_profiles').select('*').eq('role', 'Captain'),
-      supabase.from('captain_sessions').select('*').gte('completed_at', sevenDaysAgo.toISOString()).order('completed_at', { ascending: false }),
-      supabase.from('captain_sessions').select('*').order('completed_at', { ascending: false }).limit(20),
+      supabase.from('captain_sessions').select('*').eq('session_role', 'captain').gte('completed_at', sevenDaysAgo.toISOString()).order('completed_at', { ascending: false }),
+      supabase.from('captain_sessions').select('*').eq('session_role', 'captain').order('completed_at', { ascending: false }).limit(20),
     ]);
     if (profilesRes.data) setProfiles(profilesRes.data);
     if (sessionsRes.data) setSessions(sessionsRes.data);
