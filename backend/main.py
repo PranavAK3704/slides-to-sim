@@ -202,6 +202,17 @@ def run_pipeline(job_id: str, slides_url: str, target_url: Optional[str], proces
         update_job(job_id, progress=35, current_phase="Analyzing slides with Gemini Vision")
         vision_result = analyze_presentation(ingestion_result)
 
+        # Save vision result for debugging
+        vision_path = OUTPUT_DIR / "simulations" / f"{job_id}_vision.json"
+        with open(vision_path, "w") as f:
+            json.dump(vision_result, f, indent=2)
+        for sa in vision_result.get("slide_analyses", []):
+            logger.info(
+                f"[Vision] Slide {sa.get('slide_id')}: type={sa.get('slide_type')} "
+                f"steps={len(sa.get('steps', []))} method={sa.get('analysis_method')} "
+                f"bottom_text={repr(sa.get('bottom_text','')[:80])}"
+            )
+
         # Phase 3: Step Assembly + Ordering
         update_job(job_id, progress=65, current_phase="Assembling workflow steps")
         workflow = parse_and_order(ingestion_result, vision_result)
@@ -305,6 +316,22 @@ def delete_simulation(sim_id: str):
         sim_path.unlink()
         return {"deleted": True}
     raise HTTPException(status_code=404, detail="Simulation not found")
+
+
+@app.get("/api/debug/jobs/{job_id}/vision")
+def debug_vision(job_id: str):
+    """Return raw Gemini Vision output for a job — for debugging only."""
+    path = OUTPUT_DIR / "simulations" / f"{job_id}_vision.json"
+    if path.exists():
+        with open(path) as f:
+            return json.load(f)
+    # Also try matching by sim_id
+    for p in (OUTPUT_DIR / "simulations").glob("*_vision.json"):
+        with open(p) as f:
+            data = json.load(f)
+            if data.get("job_id") == job_id:
+                return data
+    raise HTTPException(status_code=404, detail="Vision debug data not found — regenerate the sim first")
 
 
 # ─── Review Endpoints ─────────────────────────────────────────────────────────
