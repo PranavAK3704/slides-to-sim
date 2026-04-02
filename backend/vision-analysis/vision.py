@@ -13,6 +13,7 @@ The slide image IS the simulation background.
 import os
 import re
 import json
+import base64
 import logging
 from pathlib import Path
 from typing import Optional
@@ -126,7 +127,9 @@ def analyze_slide(slide_data: dict) -> dict:
 
     try:
         model = _get_model()
-        image_part = {"mime_type": "image/png", "data": image_base64}
+        # Gemini expects raw bytes, not a base64 string
+        image_bytes = base64.b64decode(image_base64)
+        image_part = {"mime_type": "image/png", "data": image_bytes}
 
         response = model.generate_content([VISION_PROMPT, image_part])
         raw = response.text.strip()
@@ -167,12 +170,11 @@ def analyze_slide(slide_data: dict) -> dict:
         }
 
     except json.JSONDecodeError as e:
-        logger.error(f"Slide {slide_id}: Gemini returned invalid JSON — {e}")
-        # Try to salvage bottom_text at least
+        logger.error(f"Slide {slide_id}: Gemini returned invalid JSON — {e}\nRaw: {raw[:300]}")
         return _empty_result(slide_id, "gemini_json_error")
 
     except Exception as e:
-        logger.error(f"Slide {slide_id}: Gemini Vision failed — {e}")
+        logger.error(f"Slide {slide_id}: Gemini Vision failed — {type(e).__name__}: {e}")
         return _empty_result(slide_id, "gemini_error")
 
 
@@ -195,6 +197,15 @@ def analyze_presentation(ingestion_result: dict) -> dict:
         result["body_text"] = slide.get("body_text", "")
         result["description_text"] = slide.get("description_text", "")
         result["speaker_notes"] = slide.get("speaker_notes", "")
+
+        # If Gemini errored AND body_text has content, inject it as bottom_text fallback
+        # so the parser can still synthesize steps from the instruction text
+        if result["analysis_method"] in ("gemini_error", "gemini_json_error", "no_image"):
+            body = slide.get("body_text", "") or slide.get("description_text", "") or ""
+            if body.strip():
+                result["bottom_text"] = body.strip()
+                logger.info(f"Slide {slide['slide_id']}: Gemini failed — injecting body_text as fallback")
+
         slide_analyses.append(result)
 
     return {
