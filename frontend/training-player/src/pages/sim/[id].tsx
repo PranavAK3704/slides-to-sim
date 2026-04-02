@@ -260,10 +260,14 @@ function VisualArea({
   onHotspotClick: () => void;
   onMissClick: () => void;
 }) {
-  if (step.screenshot) {
+  // Primary image: DOM-matched screenshot first, then slide image
+  const imageUrl = step.screenshot || step.slideImage;
+
+  // If we have an image + hotspot → full Storylane-style spotlight view
+  if (imageUrl && step.hotspot) {
     return (
       <ScreenshotView
-        imageUrl={`${API_URL}${step.screenshot}`}
+        imageUrl={imageUrl.startsWith("http") ? imageUrl : `${API_URL}${imageUrl}`}
         step={step}
         mode={mode}
         showHint={showHint}
@@ -274,8 +278,9 @@ function VisualArea({
       />
     );
   }
-  if (step.slideImage) {
-    return <SlideView imageUrl={`${API_URL}${step.slideImage}`} step={step} />;
+  // Image without hotspot → informational slide (just show image + caption)
+  if (imageUrl) {
+    return <SlideView imageUrl={imageUrl.startsWith("http") ? imageUrl : `${API_URL}${imageUrl}`} step={step} />;
   }
   return <TextFallbackView step={step} />;
 }

@@ -1,18 +1,18 @@
 """
 Main Orchestrator API
 ======================
-Single FastAPI service that chains all pipeline phases:
+Pipeline phases:
 
 POST /api/generate
-  → Slide Ingestion
-  → Vision Analysis
-  → Instruction Parsing + Step Ordering
-  → DOM Matching (when target_url provided) — captures screenshots + hotspots
-  → Simulation Generation
+  → Phase 1: Slide Ingestion (Google Slides API)
+  → Phase 2: Vision Analysis (Gemini extracts steps + hotspot % coords from slide images)
+  → Phase 3: Step Assembly + Ordering
+  → Phase 4: Simulation Generation
 
 GET /api/jobs/{job_id}
 GET /api/simulations/{sim_id}
-GET /static/...  ← serves slide images and step screenshots
+PATCH /api/simulations/{sim_id}/steps/{step_index}  ← human review
+GET /static/...  ← serves slide images
 """
 
 import os
@@ -20,7 +20,6 @@ import sys
 import uuid
 import json
 import sqlite3
-import asyncio
 import logging
 from pathlib import Path
 from typing import Optional
@@ -37,13 +36,10 @@ sys.path.insert(0, str(Path(__file__).parent / "slide-ingestion"))
 sys.path.insert(0, str(Path(__file__).parent / "vision-analysis"))
 sys.path.insert(0, str(Path(__file__).parent / "instruction-parser"))
 sys.path.insert(0, str(Path(__file__).parent / "simulation-generator"))
-sys.path.insert(0, str(Path(__file__).parent / "dom-matcher"))
-
 from ingestion import ingest_presentation
 from vision import analyze_presentation
 from parser import parse_and_order
 from generator import build_simulation_config
-from dom_matcher import match_workflow as dom_match_workflow
 
 load_dotenv()
 logging.basicConfig(level=logging.INFO)
@@ -66,7 +62,6 @@ OUTPUT_DIR = Path(os.getenv("OUTPUT_DIR", "./output")).resolve()
 OUTPUT_DIR.mkdir(exist_ok=True)
 (OUTPUT_DIR / "slides").mkdir(exist_ok=True)
 (OUTPUT_DIR / "simulations").mkdir(exist_ok=True)
-(OUTPUT_DIR / "screenshots").mkdir(exist_ok=True)
 
 # Serve slide images and step screenshots
 app.mount("/static", StaticFiles(directory=str(OUTPUT_DIR)), name="static")
@@ -184,12 +179,6 @@ def annotate_slide_urls(ingestion_result: dict) -> None:
             slide["image_url"] = path_to_static_url(slide["image_path"])
 
 
-def annotate_step_urls(workflow: dict) -> None:
-    """Add screenshot_url to each step in-place."""
-    for step in workflow.get("steps", []):
-        if step.get("screenshot_path"):
-            step["screenshot_url"] = path_to_static_url(step["screenshot_path"])
-
 
 # ─── Pipeline ─────────────────────────────────────────────────────────────────
 
@@ -209,34 +198,16 @@ def run_pipeline(job_id: str, slides_url: str, target_url: Optional[str], proces
         ingestion_result = ingest_presentation(slides_url, job_id)
         annotate_slide_urls(ingestion_result)
 
-        # Phase 2: Vision Analysis
-        update_job(job_id, progress=30, current_phase="Analyzing slides with Gemini Vision")
+        # Phase 2: Vision Analysis — Gemini extracts steps + hotspots from slide images
+        update_job(job_id, progress=35, current_phase="Analyzing slides with Gemini Vision")
         vision_result = analyze_presentation(ingestion_result)
 
-        # Phase 3+4: Instruction Parsing + Step Ordering
-        update_job(job_id, progress=50, current_phase="Extracting and ordering workflow steps")
+        # Phase 3: Step Assembly + Ordering
+        update_job(job_id, progress=65, current_phase="Assembling workflow steps")
         workflow = parse_and_order(ingestion_result, vision_result)
 
-        # Phase 5: DOM Matching (only when target URL provided)
-        if target_url:
-            update_job(job_id, progress=65, current_phase="Capturing app screenshots with Playwright")
-            screenshot_dir = OUTPUT_DIR / "screenshots" / job_id
-            try:
-                loop = asyncio.new_event_loop()
-                try:
-                    workflow = loop.run_until_complete(
-                        dom_match_workflow(target_url, workflow, screenshot_dir)
-                    )
-                finally:
-                    loop.close()
-                annotate_step_urls(workflow)
-                logger.info(f"DOM matching complete for job {job_id}")
-            except Exception as e:
-                logger.error(f"DOM matching failed (continuing without it): {e}")
-                workflow["target_url"] = target_url
-
-        # Phase 6: Simulation Generation
-        update_job(job_id, progress=80, current_phase="Generating simulation configuration")
+        # Phase 4: Simulation Generation
+        update_job(job_id, progress=85, current_phase="Generating simulation configuration")
         sim_config = build_simulation_config(workflow, ingestion_result)
 
         # Store + persist
@@ -334,6 +305,61 @@ def delete_simulation(sim_id: str):
         sim_path.unlink()
         return {"deleted": True}
     raise HTTPException(status_code=404, detail="Simulation not found")
+
+
+# ─── Review Endpoints ─────────────────────────────────────────────────────────
+
+class StepPatch(BaseModel):
+    instruction:      Optional[str]  = None
+    hindiInstruction: Optional[str]  = None
+    hint:             Optional[str]  = None
+    hotspot:          Optional[dict] = None
+    needsReview:      Optional[bool] = None
+
+
+@app.patch("/api/simulations/{sim_id}/steps/{step_index}")
+def patch_step(sim_id: str, step_index: int, patch: StepPatch):
+    """Update a single step (instruction, hotspot, etc.) after human review."""
+    sim = get_simulation(sim_id)
+    if step_index < 0 or step_index >= len(sim["steps"]):
+        raise HTTPException(status_code=404, detail="Step index out of range")
+
+    step = sim["steps"][step_index]
+    data = patch.model_dump(exclude_none=True)
+    step.update(data)
+
+    # If reviewer touched it, mark as reviewed
+    if data:
+        step["needsReview"] = patch.needsReview if patch.needsReview is not None else False
+
+    # Recompute reviewRequired flag
+    sim["reviewRequired"] = any(s.get("needsReview") for s in sim["steps"])
+    sim["reviewCount"] = sum(1 for s in sim["steps"] if s.get("needsReview"))
+
+    # Persist
+    sim_path = OUTPUT_DIR / "simulations" / f"{sim_id}.json"
+    with open(sim_path, "w") as f:
+        json.dump(sim, f, indent=2)
+    simulations[sim_id] = sim
+    return sim
+
+
+@app.patch("/api/simulations/{sim_id}")
+def patch_simulation(sim_id: str, body: dict):
+    """Bulk-save reviewed simulation (full steps array replacement)."""
+    sim = get_simulation(sim_id)
+    if "steps" in body:
+        sim["steps"] = body["steps"]
+    if "title" in body:
+        sim["title"] = body["title"]
+    sim["reviewRequired"] = any(s.get("needsReview") for s in sim.get("steps", []))
+    sim["reviewCount"] = sum(1 for s in sim.get("steps", []) if s.get("needsReview"))
+
+    sim_path = OUTPUT_DIR / "simulations" / f"{sim_id}.json"
+    with open(sim_path, "w") as f:
+        json.dump(sim, f, indent=2)
+    simulations[sim_id] = sim
+    return sim
 
 
 if __name__ == "__main__":
