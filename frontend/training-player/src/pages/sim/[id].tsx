@@ -94,7 +94,7 @@ export default function SimulationPlayer() {
   if (loading) return <LoadingScreen />;
   if (error || !sim) return <ErrorScreen error={error} />;
   if (!sim.steps || sim.steps.length === 0) return (
-    <ErrorScreen error="This simulation has no steps. The slides may not have contained any detectable instructions." />
+    <ErrorScreen error="No steps were detected in these slides. Gemini Vision could not find any clickable UI elements or instructions. Try slides that have numbered red boxes, arrows, or instruction text at the bottom." title="No steps detected" />
   );
   if (finished) return (
     <FinishedScreen sim={sim} wrongClicks={wrongClicks} startTime={startTime} email={email} />
@@ -589,13 +589,13 @@ function LoadingScreen() {
   );
 }
 
-function ErrorScreen({ error }: { error: string }) {
+function ErrorScreen({ error, title }: { error: string; title?: string }) {
   const router = useRouter();
   return (
     <div className="min-h-screen bg-[#0a0a14] flex items-center justify-center">
-      <div className="text-center max-w-sm">
+      <div className="text-center max-w-sm px-4">
         <AlertCircle size={40} className="text-red-400 mx-auto mb-4" />
-        <h2 className="text-white font-semibold mb-2">Simulation not found</h2>
+        <h2 className="text-white font-semibold mb-2">{title || "Simulation not found"}</h2>
         <p className="text-slate-400 text-sm mb-4">{error || "Could not load this simulation"}</p>
         <button onClick={() => router.push("/")} className="bg-indigo-500 text-white px-4 py-2 rounded-lg text-sm">
           Go home
