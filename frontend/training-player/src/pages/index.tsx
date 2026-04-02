@@ -4,6 +4,7 @@ import { useRouter } from "next/router";
 import { motion, AnimatePresence } from "framer-motion";
 import { Sparkles, Link2, ArrowRight, Zap, Eye, Layers, Play } from "lucide-react";
 
+
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
 type JobStatus = {
@@ -18,7 +19,6 @@ type JobStatus = {
 export default function Home() {
   const router = useRouter();
   const [url, setUrl] = useState("");
-  const [targetUrl, setTargetUrl] = useState("");
   const [loading, setLoading] = useState(false);
   const [job, setJob] = useState<JobStatus | null>(null);
   const [error, setError] = useState("");
@@ -32,7 +32,7 @@ export default function Home() {
       const res = await fetch(`${API_URL}/api/generate`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ slides_url: url, target_url: targetUrl || null }),
+        body: JSON.stringify({ slides_url: url }),
       });
 
       if (!res.ok) throw new Error(`API error: ${res.status}`);
@@ -72,10 +72,10 @@ export default function Home() {
   };
 
   const features = [
-    { icon: Eye, label: "Gemini Vision AI", desc: "Understands UI elements in every slide" },
-    { icon: Layers, label: "Auto Step Ordering", desc: "Red boxes → description → slide order" },
-    { icon: Zap, label: "DOM Matching", desc: "Maps steps to real app elements" },
-    { icon: Play, label: "Interactive Player", desc: "Guided + practice modes with validation" },
+    { icon: Eye, label: "Gemini Vision AI", desc: "Reads annotations directly from slide images" },
+    { icon: Layers, label: "Auto Step Ordering", desc: "Numbered boxes → reading order → text" },
+    { icon: Zap, label: "Spotlight Hotspots", desc: "Click-accurate overlays on slide backgrounds" },
+    { icon: Play, label: "Guided + Practice", desc: "Two modes with Hindi narration support" },
   ];
 
   return (
@@ -144,20 +144,6 @@ export default function Home() {
                   className="flex-1 bg-transparent text-sm text-slate-200 placeholder:text-slate-600 outline-none"
                 />
               </div>
-            </div>
-
-            <label className="block text-sm text-slate-400 mb-2">
-              Target App URL <span className="text-slate-600">(optional — for DOM matching)</span>
-            </label>
-            <div className="flex items-center gap-2 bg-[#0f0f1a] border border-[#2d2d44] rounded-xl px-3 py-2 mb-4">
-              <Link2 size={16} className="text-slate-500 shrink-0" />
-              <input
-                type="url"
-                value={targetUrl}
-                onChange={e => setTargetUrl(e.target.value)}
-                placeholder="https://your-app.com"
-                className="flex-1 bg-transparent text-sm text-slate-200 placeholder:text-slate-600 outline-none"
-              />
             </div>
 
             <button

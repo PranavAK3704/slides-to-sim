@@ -325,7 +325,7 @@ export default function SettingsPage() {
             <ConfigRow label="Supabase Project" value="wfnmltorfvaokqbzggkn" masked={false} />
             <ConfigRow label="Supabase URL"     value="https://wfnmltorfvaokqbzggkn.supabase.co" masked={false} />
             <ConfigRow label="Anon Key"         value="sb_publishable_kVRokdcfNT-***" masked />
-            <ConfigRow label="Sim API"          value={process.env.NEXT_PUBLIC_SIM_API_URL || 'http://localhost:8000'} masked={false} />
+            <ConfigRow label="Sim API"          value={process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'} masked={false} />
             <div style={{ marginTop: 16, fontSize: 12, color: '#aaa' }}>
               To change these values, set the corresponding environment variables in your deployment.
             </div>
