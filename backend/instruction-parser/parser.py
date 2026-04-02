@@ -78,10 +78,26 @@ def parse_and_order(ingestion_result: dict, vision_result: dict) -> dict:
         slide_type = slide_analysis.get("slide_type", "instructional")
         steps = slide_analysis.get("steps", [])
 
-        # Skip non-instructional slides
-        if slide_type in ("informational", "title") or not steps:
-            logger.info(f"Slide {slide_id}: {slide_type} — skipping (no steps)")
-            continue
+        # If Gemini returned no steps but there's bottom text, synthesize a fallback step
+        if not steps:
+            bottom_text = slide_analysis.get("bottom_text", "").strip()
+            if bottom_text and slide_type != "title":
+                logger.info(f"Slide {slide_id}: no steps from vision, synthesizing from bottom_text")
+                steps = [{
+                    "order": 1,
+                    "order_source": "text_hint",
+                    "annotation_type": "none",
+                    "element_label": "",
+                    "element_type": "unknown",
+                    "action": "click",
+                    "value": None,
+                    "hotspot": None,
+                    "instruction": bottom_text,
+                    "confidence": 0.4,
+                }]
+            else:
+                logger.info(f"Slide {slide_id}: {slide_type} — skipping (no steps, no bottom text)")
+                continue
 
         meta = slide_meta.get(slide_id, {})
         image_url = slide_analysis.get("image_url")
