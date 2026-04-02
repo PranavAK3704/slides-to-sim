@@ -35,40 +35,48 @@ def _get_model():
 
 # ─── Prompt ───────────────────────────────────────────────────────────────────
 
-VISION_PROMPT = """You are analyzing a software training slide image. The slide contains a screenshot of a web application with visual annotations showing which UI elements to click.
+VISION_PROMPT = """You are analyzing a software training slide. Your job is to identify every UI action a learner must perform and return them as structured steps with precise hotspot locations.
 
-Your job: extract every numbered step shown on this slide as a structured action with a precise hotspot location.
+=== STEP 1: CLASSIFY THE SLIDE ===
 
---- WHAT TO LOOK FOR (in priority order) ---
+slide_type = "instructional"  → slide shows a UI screenshot with actions to perform
+slide_type = "informational"  → purely text/diagram, no UI screenshot, nothing to click
+slide_type = "title"          → cover/section-break slide, no content
 
-1. NUMBERED BADGES/CIRCLES — small red, orange, or dark circles or squares containing a digit (1, 2, 3...) placed directly ON or NEXT TO a UI element. These are the most common annotation style. The number tells you the click order. The hotspot = the UI element the badge is touching or pointing to.
+DEFAULT TO "instructional" whenever you see a UI screenshot. Only use "informational" or "title" when there is clearly no interactive element at all.
 
-2. NUMBERED BOXES — a rectangle drawn around a UI element with a number label. Hotspot = the rectangle area.
+=== STEP 2: FIND ANNOTATIONS (any style, any color) ===
 
-3. UNNUMBERED HIGHLIGHT BOXES — colored borders or rectangles around UI elements without numbers. Order = top-left to bottom-right.
+Trainers annotate slides in many different ways. Look for ALL of these:
 
-4. ARROWS — arrow tip points to target. Hotspot = the element at the arrow tip.
+A) NUMBERED MARKERS — any small shape (circle, square, badge, label) containing a digit placed on or near a UI element. Color doesn't matter: red, orange, yellow, blue, black. The NUMBER gives you the step order.
 
-5. BOTTOM INSTRUCTION BOX — many slides have a bordered text box at the bottom (often red/pink border) stating the instruction like "Go to Inventory(1). Click Exceptions(2)." Always extract this text. Use the numbers in parentheses to match badges to their instructions.
+B) HIGHLIGHT BOXES / BORDERS — any rectangle, outline, or border drawn around a UI element. Any color. If numbered → use the number. If not → use reading order (top-left first).
 
-6. NO ANNOTATION — if only bottom text exists, locate the described element visually in the screenshot and create a step for it (confidence ≤ 0.6).
+C) ARROWS / LINES — tip of arrow points to the target element.
 
---- CRITICAL RULES ---
+D) HIGHLIGHTS / UNDERLINES — colored highlight or underline on text/element.
 
-- A slide containing a web app screenshot WITH any numbered badges/circles IS instructional — never mark it informational.
-- Only mark slide_type="informational" if the slide is PURELY text/diagram with zero UI screenshot and zero action annotations.
-- Only mark slide_type="title" if it's a plain title/cover slide with no screenshot.
-- WHEN IN DOUBT, mark as instructional and extract what you can.
-- For each numbered badge, create ONE step. The hotspot must cover the ACTUAL UI ELEMENT being highlighted (the tab, button, field), NOT the badge circle itself.
-- Parse the bottom instruction text to write a clear human-readable instruction for each step.
+E) CURSOR ICON — a mouse cursor graphic placed on an element.
 
---- HOTSPOT COORDINATES ---
+F) BOTTOM INSTRUCTION TEXT — a text area (often bordered) at the bottom of the slide containing the written instruction. It may reference steps by number in parentheses like "(1)" or "(2)". ALWAYS extract this — it is the most reliable source of what to do.
 
-- Express as PERCENTAGES of the full image (0.0 to 100.0)
-- xPct = left edge %, yPct = top edge %, widthPct = width %, heightPct = height %
-- Make the hotspot cover the full clickable element (e.g. the whole tab or button), not just the badge
+G) NO VISUAL ANNOTATION — if the slide has a UI screenshot and instruction text but no visual markers, locate the described element visually from the text and create a step (confidence 0.5).
 
---- RESPOND WITH JSON ONLY — no markdown, no backticks, no explanation ---
+=== STEP 3: BUILD HOTSPOT FOR EACH STEP ===
+
+The hotspot must cover the ACTUAL UI ELEMENT to interact with (the button, tab, field, link), NOT the annotation marker itself.
+
+- Use the annotation only to IDENTIFY which element is being highlighted
+- Then draw the bounding box around that element
+- Coordinates are PERCENTAGES of the full image: xPct, yPct = top-left corner; widthPct, heightPct = size
+- Be precise — this is what the learner will click in the simulation
+
+=== STEP 4: WRITE THE INSTRUCTION ===
+
+Use the bottom instruction text as the primary source. If absent, write a short imperative: "Click [element label]", "Select [option]", "Type in [field name]".
+
+=== OUTPUT — JSON ONLY, no markdown, no backticks ===
 
 {
   "slide_type": "instructional",
@@ -81,43 +89,20 @@ Your job: extract every numbered step shown on this slide as a structured action
       "element_type": "tab",
       "action": "click",
       "value": null,
-      "hotspot": {
-        "xPct": 5.2,
-        "yPct": 34.1,
-        "widthPct": 8.4,
-        "heightPct": 4.2
-      },
-      "instruction": "Click the Inventory tab",
-      "confidence": 0.95
-    },
-    {
-      "order": 2,
-      "order_source": "numbered_box",
-      "annotation_type": "numbered_box",
-      "element_label": "Exceptions",
-      "element_type": "tab",
-      "action": "click",
-      "value": null,
-      "hotspot": {
-        "xPct": 55.1,
-        "yPct": 28.5,
-        "widthPct": 9.0,
-        "heightPct": 4.0
-      },
-      "instruction": "Click on Exceptions",
+      "hotspot": { "xPct": 5.2, "yPct": 34.1, "widthPct": 8.4, "heightPct": 4.2 },
+      "instruction": "Go to Inventory",
       "confidence": 0.95
     }
   ],
   "bottom_text": "For Misroute Shipments, Go to Inventory(1). Click on Exceptions(2).",
-  "analysis_notes": "Two numbered red badge circles visible on slide."
+  "analysis_notes": "Brief note on what was found and confidence level."
 }
 
-Valid values:
-  order_source: "numbered_box" | "reading_order" | "text_hint" | "inferred"
-  annotation_type: "numbered_box" | "box" | "arrow" | "circle" | "cursor" | "underline" | "none"
-  element_type: "button" | "tab" | "input" | "dropdown" | "link" | "menu" | "icon" | "checkbox" | "unknown"
-  action: "click" | "type" | "select" | "hover" | "scroll" | "verify"
-  slide_type: "instructional" | "informational" | "title"
+order_source: "numbered_box" | "reading_order" | "text_hint" | "inferred"
+annotation_type: "numbered_box" | "box" | "arrow" | "circle" | "highlight" | "underline" | "cursor" | "none"
+element_type: "button" | "tab" | "input" | "dropdown" | "link" | "menu" | "icon" | "checkbox" | "unknown"
+action: "click" | "type" | "select" | "hover" | "scroll" | "verify"
+slide_type: "instructional" | "informational" | "title"
 """
 
 
