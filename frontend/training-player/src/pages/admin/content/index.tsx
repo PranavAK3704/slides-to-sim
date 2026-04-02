@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import AdminLayout from '@/components/AdminLayout';
 import { supabase, Simulation } from '@/lib/supabase';
-import { Plus, Loader, CheckCircle, XCircle, BookOpen, Trash2, ExternalLink } from 'lucide-react';
+import { Plus, Loader, CheckCircle, XCircle, BookOpen, Trash2, ExternalLink, AlertTriangle } from 'lucide-react';
 
 const API = process.env.NEXT_PUBLIC_SIM_API_URL || 'http://localhost:8000';
 
@@ -199,9 +199,16 @@ export default function ContentPage() {
                   {new Date(s.created_at).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}
                 </span>
               </div>
-              <a href={`/sim/${s.id}`} target="_blank" rel="noreferrer" style={{ display: 'flex', alignItems: 'center', gap: 6, color: '#9747FF', textDecoration: 'none', fontSize: 12, fontWeight: 600, marginTop: 'auto' }}>
-                <ExternalLink size={13} /> Preview simulation
-              </a>
+              <div style={{ display: 'flex', gap: 8, marginTop: 'auto', alignItems: 'center' }}>
+                <a href={`/sim/${s.id}`} target="_blank" rel="noreferrer" style={{ display: 'flex', alignItems: 'center', gap: 6, color: '#9747FF', textDecoration: 'none', fontSize: 12, fontWeight: 600 }}>
+                  <ExternalLink size={13} /> Preview
+                </a>
+                {Array.isArray(s.steps_json) && (s.steps_json as any[]).some((step: any) => step.needsReview) && (
+                  <a href={`/admin/simulations/${s.id}/review`} style={{ display: 'flex', alignItems: 'center', gap: 5, marginLeft: 'auto', padding: '4px 10px', background: 'rgba(245,158,11,0.12)', border: '1px solid rgba(245,158,11,0.3)', borderRadius: 6, color: '#f59e0b', textDecoration: 'none', fontSize: 11, fontWeight: 700 }}>
+                    <AlertTriangle size={11} /> Review steps
+                  </a>
+                )}
+              </div>
             </div>
           ))}
         </div>

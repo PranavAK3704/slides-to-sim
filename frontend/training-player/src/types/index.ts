@@ -2,9 +2,9 @@ export type ActionType = "click" | "type" | "select" | "hover" | "navigate" | "s
 export type PlayerMode = "guided" | "practice";
 
 export interface Hotspot {
-  /** Left edge as % of screenshot width (0–100) */
+  /** Left edge as % of image width (0–100) */
   xPct: number;
-  /** Top edge as % of screenshot height (0–100) */
+  /** Top edge as % of image height (0–100) */
   yPct: number;
   widthPct: number;
   heightPct: number;
@@ -14,24 +14,23 @@ export interface SimulationStep {
   stepNumber: number;
   instruction: string;
   hindiInstruction?: string;
-  selector: string;
   action: ActionType;
-  value?: string;
+  value?: string | null;
   hint?: string;
-  /** App screenshot URL served from /static/screenshots/... (DOM-matched sims) */
-  screenshot?: string;
-  /** Hotspot overlay position as % of screenshot dimensions */
-  hotspot?: Hotspot;
-  /** Slide image URL served from /static/slides/... (fallback) */
+  /** Hotspot overlay position as % of slide/screenshot dimensions */
+  hotspot?: Hotspot | null;
+  /** Slide image URL served from /static/slides/... */
   slideImage?: string;
-  validation?: {
-    type: "click_target" | "url_change" | "element_visible";
-    expected: string;
-  };
+  /** App screenshot URL (DOM-matched sims — legacy) */
+  screenshot?: string;
+  /** Whether this step was flagged for human review (low Gemini confidence) */
+  needsReview?: boolean;
   meta?: {
     target?: string;
     confidence?: number;
     orderingMethod?: string;
+    annotationType?: string;
+    sourceSlideId?: number;
     fallbackUsed?: boolean;
   };
 }
@@ -40,10 +39,11 @@ export interface SimulationConfig {
   id: string;
   title: string;
   description?: string;
-  targetUrl?: string;
-  domMatched?: boolean;
   createdAt: string;
   stepCount: number;
   estimatedMinutes?: number;
+  /** True if any step still needs human review */
+  reviewRequired?: boolean;
+  reviewCount?: number;
   steps: SimulationStep[];
 }
