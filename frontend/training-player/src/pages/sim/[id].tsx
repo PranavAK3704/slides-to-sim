@@ -312,9 +312,10 @@ function ScreenshotView({
   onMissClick: () => void;
 }) {
   const { hotspot } = step;
+  const isPractice = mode === "practice";
 
   const handleContainerClick = (e: React.MouseEvent<HTMLDivElement>) => {
-    if (!hotspot || mode !== "practice") return;
+    if (!hotspot || !isPractice) return;
     const rect = e.currentTarget.getBoundingClientRect();
     const xPct = ((e.clientX - rect.left) / rect.width) * 100;
     const yPct = ((e.clientY - rect.top) / rect.height) * 100;
@@ -328,18 +329,22 @@ function ScreenshotView({
 
   const tooltipBelow = hotspot ? hotspot.yPct + hotspot.heightPct < 75 : true;
 
+  // In practice mode: hotspot is only revealed after hint is requested or on correct/wrong flash
+  const showSpotlight = hotspot && !isPractice;
+  const showHotspotRing = hotspot && (!isPractice || showHint || showCorrect || showWrong);
+
   return (
     <div className="relative w-full max-w-5xl" style={{ aspectRatio: "16/9" }}>
       <div
         className="absolute inset-0 rounded-xl border border-[#2d2d44] overflow-hidden"
         onClick={handleContainerClick}
-        style={{ cursor: mode === "practice" ? "crosshair" : "default" }}
+        style={{ cursor: isPractice ? "crosshair" : "default" }}
       >
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img src={imageUrl} alt="App screenshot" className="w-full h-full object-cover" draggable={false} />
 
-        {/* Spotlight: dim everything outside hotspot */}
-        {hotspot && (
+        {/* Spotlight: dim everything outside hotspot — guided only */}
+        {showSpotlight && (
           <div className="absolute inset-0 pointer-events-none">
             <div className="absolute bg-black/50" style={{ top: 0, left: 0, right: 0, height: `${hotspot.yPct}%` }} />
             <div className="absolute bg-black/50" style={{ top: `${hotspot.yPct + hotspot.heightPct}%`, left: 0, right: 0, bottom: 0 }} />
@@ -348,16 +353,16 @@ function ScreenshotView({
           </div>
         )}
 
-        {/* Hotspot ring */}
-        {hotspot && (
+        {/* Hotspot ring — always visible in guided; hidden in practice until hint/feedback */}
+        {showHotspotRing && (
           <div
             onClick={e => { e.stopPropagation(); onHotspotClick(); }}
             className="absolute rounded-sm"
             style={{
-              left: `${hotspot.xPct}%`,
-              top: `${hotspot.yPct}%`,
-              width: `${hotspot.widthPct}%`,
-              height: `${hotspot.heightPct}%`,
+              left: `${hotspot!.xPct}%`,
+              top: `${hotspot!.yPct}%`,
+              width: `${hotspot!.widthPct}%`,
+              height: `${hotspot!.heightPct}%`,
               cursor: "pointer",
               boxShadow: showCorrect
                 ? "0 0 0 3px rgba(34,197,94,0.9), 0 0 20px rgba(34,197,94,0.4)"
@@ -372,8 +377,8 @@ function ScreenshotView({
           </div>
         )}
 
-        {/* Instruction tooltip */}
-        {hotspot && (mode === "guided" || showHint) && (
+        {/* Instruction tooltip — guided always; practice only when hint shown */}
+        {hotspot && (!isPractice || showHint) && (
           <div
             className="absolute pointer-events-none z-10"
             style={{
@@ -408,7 +413,7 @@ function ScreenshotView({
             <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
               className="absolute inset-0 flex items-center justify-center pointer-events-none">
               <div className="bg-red-500/90 text-white px-4 py-2 rounded-xl font-medium text-sm shadow-xl">
-                Click the highlighted area
+                Not quite — try again
               </div>
             </motion.div>
           )}
@@ -423,9 +428,9 @@ function ScreenshotView({
         </AnimatePresence>
       </div>
 
-      {mode === "practice" && !showHint && (
-        <p className="absolute -bottom-6 left-1/2 -translate-x-1/2 text-xs text-slate-600">
-          Click the highlighted element to continue
+      {isPractice && !showHint && !showCorrect && (
+        <p className="absolute -bottom-6 left-1/2 -translate-x-1/2 text-xs text-slate-500">
+          Click the correct element on screen to continue
         </p>
       )}
     </div>
@@ -537,7 +542,7 @@ function StepPanel({
             <code className="text-xs text-slate-400 font-mono truncate">{step.meta.target}</code>
           </div>
         )}
-        {mode === "guided" && step.hint && (
+        {step.hint && (
           <div>
             <button
               onClick={onToggleHint}
@@ -566,10 +571,16 @@ function StepPanel({
           className="flex-1 flex items-center justify-center gap-1 bg-[#1a1a2e] border border-[#2d2d44] hover:border-[#4a4a66] disabled:opacity-30 disabled:cursor-not-allowed text-slate-300 rounded-xl py-2.5 text-xs transition-all">
           <ChevronLeft size={14} /> Back
         </button>
-        <button onClick={onNext}
-          className="flex-1 flex items-center justify-center gap-1 bg-indigo-500 hover:bg-indigo-400 text-white rounded-xl py-2.5 text-xs font-medium transition-all">
-          {isLast ? <><CheckCircle2 size={14} /> Finish</> : <>Next <ChevronRight size={14} /></>}
-        </button>
+        {mode === "guided" ? (
+          <button onClick={onNext}
+            className="flex-1 flex items-center justify-center gap-1 bg-indigo-500 hover:bg-indigo-400 text-white rounded-xl py-2.5 text-xs font-medium transition-all">
+            {isLast ? <><CheckCircle2 size={14} /> Finish</> : <>Next <ChevronRight size={14} /></>}
+          </button>
+        ) : (
+          <div className="flex-1 flex items-center justify-center gap-1 bg-[#1a1a2e] border border-[#2d2d44] text-slate-600 rounded-xl py-2.5 text-xs cursor-default select-none">
+            Click to advance
+          </div>
+        )}
       </div>
     </div>
   );
