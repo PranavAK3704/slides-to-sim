@@ -35,43 +35,40 @@ def _get_model():
 
 # ─── Prompt ───────────────────────────────────────────────────────────────────
 
-VISION_PROMPT = """You are analyzing a software training slide image.
+VISION_PROMPT = """You are analyzing a software training slide image. The slide contains a screenshot of a web application with visual annotations showing which UI elements to click.
 
-Identify every UI interaction step shown on this slide.
+Your job: extract every numbered step shown on this slide as a structured action with a precise hotspot location.
 
---- HOW TO DETECT STEPS ---
+--- WHAT TO LOOK FOR (in priority order) ---
 
-Look for visual annotations in this priority order:
-1. NUMBERED colored boxes/circles (e.g. red box with "1", orange circle with "2") → MOST RELIABLE, gives you explicit step order
-2. UNNUMBERED colored boxes/borders around UI elements → use top-left to bottom-right reading order
-3. ARROWS or lines pointing at elements → arrow tip = target element
-4. CIRCLES or ovals drawn around elements
-5. CURSOR/POINTER icon placed on an element
-6. NO VISUAL ANNOTATION → read the bottom instruction text and locate the described element visually in the screenshot
+1. NUMBERED BADGES/CIRCLES — small red, orange, or dark circles or squares containing a digit (1, 2, 3...) placed directly ON or NEXT TO a UI element. These are the most common annotation style. The number tells you the click order. The hotspot = the UI element the badge is touching or pointing to.
 
---- BOUNDING BOX RULES ---
+2. NUMBERED BOXES — a rectangle drawn around a UI element with a number label. Hotspot = the rectangle area.
 
-For the hotspot:
-- Use the bounding box of the HIGHLIGHTED/ANNOTATED AREA (the red box, arrow, circle, etc.)
-- If annotation_type is "none", use the bounding box of the UI element described in the text
-- Express ALL coordinates as PERCENTAGES of image dimensions (0.0 to 100.0)
+3. UNNUMBERED HIGHLIGHT BOXES — colored borders or rectangles around UI elements without numbers. Order = top-left to bottom-right.
+
+4. ARROWS — arrow tip points to target. Hotspot = the element at the arrow tip.
+
+5. BOTTOM INSTRUCTION BOX — many slides have a bordered text box at the bottom (often red/pink border) stating the instruction like "Go to Inventory(1). Click Exceptions(2)." Always extract this text. Use the numbers in parentheses to match badges to their instructions.
+
+6. NO ANNOTATION — if only bottom text exists, locate the described element visually in the screenshot and create a step for it (confidence ≤ 0.6).
+
+--- CRITICAL RULES ---
+
+- A slide containing a web app screenshot WITH any numbered badges/circles IS instructional — never mark it informational.
+- Only mark slide_type="informational" if the slide is PURELY text/diagram with zero UI screenshot and zero action annotations.
+- Only mark slide_type="title" if it's a plain title/cover slide with no screenshot.
+- WHEN IN DOUBT, mark as instructional and extract what you can.
+- For each numbered badge, create ONE step. The hotspot must cover the ACTUAL UI ELEMENT being highlighted (the tab, button, field), NOT the badge circle itself.
+- Parse the bottom instruction text to write a clear human-readable instruction for each step.
+
+--- HOTSPOT COORDINATES ---
+
+- Express as PERCENTAGES of the full image (0.0 to 100.0)
 - xPct = left edge %, yPct = top edge %, widthPct = width %, heightPct = height %
-- Be precise — the hotspot is what the user will click in the simulation
+- Make the hotspot cover the full clickable element (e.g. the whole tab or button), not just the badge
 
---- EDGE CASES ---
-
-- Multiple numbered boxes on one slide → return ALL as separate steps ordered by their numbers
-- Multiple unnumbered highlights → order top-left first, bottom-right last
-- Step text at bottom says "Click X" but no annotation → set annotation_type="none", locate X visually, confidence ≤ 0.6
-- Purely informational slide (no UI actions) → set slide_type="informational", return empty steps array
-- Title/section break slide → set slide_type="title", return empty steps array
-
---- BOTTOM TEXT ---
-
-Many training slides have instruction text at the bottom (often smaller font, sometimes a description area).
-Always extract this as bottom_text — it's often the most reliable source of what action to perform.
-
---- RESPOND WITH JSON ONLY (no markdown, no backticks) ---
+--- RESPOND WITH JSON ONLY — no markdown, no backticks, no explanation ---
 
 {
   "slide_type": "instructional",
@@ -85,17 +82,34 @@ Always extract this as bottom_text — it's often the most reliable source of wh
       "action": "click",
       "value": null,
       "hotspot": {
-        "xPct": 12.5,
-        "yPct": 28.3,
-        "widthPct": 9.2,
-        "heightPct": 5.1
+        "xPct": 5.2,
+        "yPct": 34.1,
+        "widthPct": 8.4,
+        "heightPct": 4.2
       },
       "instruction": "Click the Inventory tab",
       "confidence": 0.95
+    },
+    {
+      "order": 2,
+      "order_source": "numbered_box",
+      "annotation_type": "numbered_box",
+      "element_label": "Exceptions",
+      "element_type": "tab",
+      "action": "click",
+      "value": null,
+      "hotspot": {
+        "xPct": 55.1,
+        "yPct": 28.5,
+        "widthPct": 9.0,
+        "heightPct": 4.0
+      },
+      "instruction": "Click on Exceptions",
+      "confidence": 0.95
     }
   ],
-  "bottom_text": "Click the Inventory tab to navigate to stock management",
-  "analysis_notes": "One numbered red box. High confidence."
+  "bottom_text": "For Misroute Shipments, Go to Inventory(1). Click on Exceptions(2).",
+  "analysis_notes": "Two numbered red badge circles visible on slide."
 }
 
 Valid values:
