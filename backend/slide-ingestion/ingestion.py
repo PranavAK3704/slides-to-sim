@@ -103,6 +103,33 @@ def get_slides_service():
     return build("slides", "v1", credentials=creds)
 
 
+def get_drive_service():
+    """Build authenticated Google Drive API service."""
+    creds = _get_credentials_with_drive_scope()
+    return build("drive", "v3", credentials=creds)
+
+
+def _get_credentials_with_drive_scope():
+    """Same as _get_credentials but with Drive scope for conversion."""
+    SCOPES = [
+        "https://www.googleapis.com/auth/presentations.readonly",
+        "https://www.googleapis.com/auth/drive",
+    ]
+    if GOOGLE_SERVICE_ACCOUNT_JSON and Path(GOOGLE_SERVICE_ACCOUNT_JSON).exists():
+        from google.oauth2 import service_account
+        return service_account.Credentials.from_service_account_file(
+            GOOGLE_SERVICE_ACCOUNT_JSON, scopes=SCOPES
+        )
+    if GOOGLE_SERVICE_ACCOUNT_JSON_CONTENT:
+        import json as _json
+        from google.oauth2 import service_account
+        info = _json.loads(GOOGLE_SERVICE_ACCOUNT_JSON_CONTENT)
+        return service_account.Credentials.from_service_account_info(info, scopes=SCOPES)
+    import google.auth
+    creds, _ = google.auth.default(scopes=SCOPES)
+    return creds
+
+
 # ─── Shape Text Extraction ────────────────────────────────────────────────────
 
 def extract_text_from_shape(shape: dict) -> str:
@@ -227,6 +254,37 @@ def extract_speaker_notes(slide: dict) -> Optional[str]:
     return " ".join(notes_parts).strip() or None
 
 
+# ─── PowerPoint → Google Slides Conversion ───────────────────────────────────
+
+def _convert_pptx_to_slides(presentation_id: str) -> str:
+    """
+    Use Drive API to copy the file as a native Google Slides presentation.
+    Returns the new presentation ID.
+    Raises ValueError with a user-facing message if conversion also fails.
+    """
+    try:
+        drive = get_drive_service()
+        result = drive.files().copy(
+            fileId=presentation_id,
+            body={
+                "name": f"converted_{presentation_id}",
+                "mimeType": "application/vnd.google-apps.presentation",
+            }
+        ).execute()
+        new_id = result.get("id")
+        if not new_id:
+            raise ValueError("Drive conversion returned no file ID")
+        logger.info(f"Drive conversion succeeded: {presentation_id} → {new_id}")
+        return new_id
+    except Exception as e:
+        raise ValueError(
+            "This presentation is an uploaded PowerPoint file, not a native Google Slides file. "
+            "The automatic conversion failed. "
+            "Please open the file in Google Drive, go to File → Save as Google Slides, "
+            "then share the new Google Slides link instead."
+        ) from e
+
+
 # ─── Main Ingestion Function ──────────────────────────────────────────────────
 
 def ingest_presentation(url: str, job_id: str) -> dict:
@@ -251,9 +309,22 @@ def ingest_presentation(url: str, job_id: str) -> dict:
     
     # Fetch presentation data
     service = get_slides_service()
-    presentation = service.presentations().get(
-        presentationId=presentation_id
-    ).execute()
+    try:
+        presentation = service.presentations().get(
+            presentationId=presentation_id
+        ).execute()
+    except Exception as e:
+        err_str = str(e)
+        if "not supported for this document" in err_str or "400" in err_str:
+            # Likely an uploaded PowerPoint — try to auto-convert via Drive API
+            logger.warning(f"Presentation {presentation_id} is not native Google Slides. Attempting Drive conversion...")
+            presentation_id = _convert_pptx_to_slides(presentation_id)
+            presentation = service.presentations().get(
+                presentationId=presentation_id
+            ).execute()
+            logger.info(f"Successfully converted to native Slides: {presentation_id}")
+        else:
+            raise
     
     deck_title = presentation.get("title", "Untitled Presentation")
     slides = presentation.get("slides", [])
