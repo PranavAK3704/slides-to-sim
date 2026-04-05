@@ -134,6 +134,10 @@ def parse_and_order(ingestion_result: dict, vision_result: dict) -> dict:
                 "annotation_type": step.get("annotation_type", "unknown"),
                 "confidence": confidence,
                 "needs_review": needs_review,
+                # Live overlay fields — extracted by Gemini, editable in review UI
+                "element_text": step.get("elementText") or step.get("element_label", ""),
+                "url_pattern": step.get("urlPattern", ""),
+                "is_safe_action": step.get("isSafeAction", True),
             })
             global_counter += 1
 

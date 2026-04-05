@@ -103,6 +103,10 @@ def build_simulation_config(
             "slideImage": slide_image,
             # Confidence + review flag
             "needsReview": raw.get("needs_review", False),
+            # Live overlay fields
+            "elementText": raw.get("element_text", raw.get("target", "")),
+            "urlPattern":  raw.get("url_pattern", ""),
+            "isSafeAction": raw.get("is_safe_action", True),
             "meta": {
                 "target": raw.get("target"),
                 "confidence": raw.get("confidence", 0),

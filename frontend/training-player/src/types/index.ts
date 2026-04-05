@@ -25,6 +25,12 @@ export interface SimulationStep {
   screenshot?: string;
   /** Whether this step was flagged for human review (low Gemini confidence) */
   needsReview?: boolean;
+  /** Exact visible text of DOM element to click (for live overlay) */
+  elementText?: string;
+  /** URL fragment that must appear in window.location.href for this step */
+  urlPattern?: string;
+  /** false = intercept click in dry-run mode before advancing */
+  isSafeAction?: boolean;
   meta?: {
     target?: string;
     confidence?: number;

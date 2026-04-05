@@ -342,6 +342,9 @@ class StepPatch(BaseModel):
     hint:             Optional[str]  = None
     hotspot:          Optional[dict] = None
     needsReview:      Optional[bool] = None
+    elementText:      Optional[str]  = None
+    urlPattern:       Optional[str]  = None
+    isSafeAction:     Optional[bool] = None
 
 
 @app.patch("/api/simulations/{sim_id}/steps/{step_index}")

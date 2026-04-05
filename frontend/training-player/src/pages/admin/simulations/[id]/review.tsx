@@ -353,6 +353,56 @@ export default function ReviewPage() {
             />
           </div>
 
+          {/* Live overlay fields */}
+          <div style={{ marginTop: 20, padding: '16px', background: 'rgba(151,71,255,0.04)', border: '1px solid rgba(151,71,255,0.12)', borderRadius: 10 }}>
+            <div style={{ fontSize: 11, fontWeight: 700, color: '#9747FF', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 12 }}>Live Overlay (console.valmo.in)</div>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+              <div>
+                <label style={{ fontSize: 11, fontWeight: 600, color: '#666', textTransform: 'uppercase', letterSpacing: 0.5, display: 'block', marginBottom: 6 }}>
+                  Element Text <span style={{ color: '#f59e0b' }}>*</span>
+                </label>
+                <input
+                  value={step.elementText || ''}
+                  onChange={e => updateStep(activeIdx, { elementText: e.target.value })}
+                  placeholder="e.g. RTO, Forward Dispatch"
+                  style={{ width: '100%', padding: '9px 12px', border: '1.5px solid #e8eaed', borderRadius: 8, fontSize: 13, boxSizing: 'border-box', outline: 'none', fontFamily: 'monospace' }}
+                  onFocus={e => (e.currentTarget.style.borderColor = '#9747FF')}
+                  onBlur={e => (e.currentTarget.style.borderColor = '#e8eaed')}
+                />
+                <div style={{ fontSize: 10, color: '#aaa', marginTop: 4 }}>Exact text visible on DOM element</div>
+              </div>
+              <div>
+                <label style={{ fontSize: 11, fontWeight: 600, color: '#666', textTransform: 'uppercase', letterSpacing: 0.5, display: 'block', marginBottom: 6 }}>
+                  URL Pattern
+                </label>
+                <input
+                  value={step.urlPattern || ''}
+                  onChange={e => updateStep(activeIdx, { urlPattern: e.target.value })}
+                  placeholder="e.g. rto, forward, bagging"
+                  style={{ width: '100%', padding: '9px 12px', border: '1.5px solid #e8eaed', borderRadius: 8, fontSize: 13, boxSizing: 'border-box', outline: 'none', fontFamily: 'monospace' }}
+                  onFocus={e => (e.currentTarget.style.borderColor = '#9747FF')}
+                  onBlur={e => (e.currentTarget.style.borderColor = '#e8eaed')}
+                />
+                <div style={{ fontSize: 10, color: '#aaa', marginTop: 4 }}>URL fragment for navigation check</div>
+              </div>
+            </div>
+            <div style={{ marginTop: 12, display: 'flex', alignItems: 'center', gap: 10 }}>
+              <label style={{ fontSize: 11, fontWeight: 600, color: '#666', textTransform: 'uppercase', letterSpacing: 0.5 }}>Action type</label>
+              <button
+                onClick={() => updateStep(activeIdx, { isSafeAction: true })}
+                style={{ padding: '5px 14px', borderRadius: 6, border: '1.5px solid', fontSize: 12, fontWeight: 600, cursor: 'pointer', background: step.isSafeAction !== false ? 'rgba(34,197,94,0.1)' : '#f9f9f9', borderColor: step.isSafeAction !== false ? '#22c55e' : '#e8eaed', color: step.isSafeAction !== false ? '#16a34a' : '#888' }}
+              >
+                ✓ Safe (navigate / read)
+              </button>
+              <button
+                onClick={() => updateStep(activeIdx, { isSafeAction: false })}
+                style={{ padding: '5px 14px', borderRadius: 6, border: '1.5px solid', fontSize: 12, fontWeight: 600, cursor: 'pointer', background: step.isSafeAction === false ? 'rgba(245,158,11,0.1)' : '#f9f9f9', borderColor: step.isSafeAction === false ? '#f59e0b' : '#e8eaed', color: step.isSafeAction === false ? '#d97706' : '#888' }}
+              >
+                ⚠ Dry-run (submit / delete / create)
+              </button>
+            </div>
+          </div>
+
           {/* Action buttons */}
           <div style={{ display: 'flex', gap: 10, marginTop: 20 }}>
             {step.needsReview ? (

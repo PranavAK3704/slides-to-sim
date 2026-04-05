@@ -92,7 +92,10 @@ Use the bottom instruction text as the primary source. If absent, write a short 
       "value": null,
       "hotspot": { "xPct": 5.2, "yPct": 34.1, "widthPct": 8.4, "heightPct": 4.2 },
       "instruction": "Go to Inventory",
-      "confidence": 0.95
+      "confidence": 0.95,
+      "elementText": "Inventory",
+      "urlPattern": "inventory",
+      "isSafeAction": true
     }
   ],
   "bottom_text": "For Misroute Shipments, Go to Inventory(1). Click on Exceptions(2).",
@@ -104,6 +107,9 @@ annotation_type: "numbered_box" | "box" | "arrow" | "circle" | "highlight" | "un
 element_type: "button" | "tab" | "input" | "dropdown" | "link" | "menu" | "icon" | "checkbox" | "unknown"
 action: "click" | "type" | "select" | "hover" | "scroll" | "verify"
 slide_type: "instructional" | "informational" | "title"
+elementText: the EXACT visible text of the element — must match what a user would read on screen (this is used for DOM text matching on the live app)
+urlPattern: a short string that should appear in the browser URL when on this page (e.g. "rto", "forward", "exceptions", "dashboard") — use "" if unknown
+isSafeAction: true if the action only navigates or reads data; false if it creates, submits, updates, or deletes records
 """
 
 

@@ -343,6 +343,12 @@ export default function ContentPage() {
     setSims(prev => prev.filter(s => s.id !== id));
   };
 
+  const togglePublish = async (id: string, current: boolean | null) => {
+    const next = !current;
+    await supabase.from('simulations').update({ published: next }).eq('id', id);
+    setSims(prev => prev.map(s => s.id === id ? { ...s, published: next } : s));
+  };
+
   const handleScormExport = async (sim: Simulation) => {
     setExporting(sim.id);
     try {
@@ -467,11 +473,15 @@ export default function ContentPage() {
                   <Download size={11} /> {exporting === s.id ? 'Exporting…' : 'SCORM'}
                 </button>
 
-                {Array.isArray(s.steps_json) && (s.steps_json as any[]).some((step: any) => step.needsReview) && (
-                  <a href={`/admin/simulations/${s.id}/review`} style={{ display: 'flex', alignItems: 'center', gap: 5, marginLeft: 'auto', padding: '4px 10px', background: 'rgba(245,158,11,0.12)', border: '1px solid rgba(245,158,11,0.3)', borderRadius: 6, color: '#f59e0b', textDecoration: 'none', fontSize: 11, fontWeight: 700 }}>
-                    <AlertTriangle size={11} /> Review
-                  </a>
-                )}
+                <a href={`/admin/simulations/${s.id}/review`} style={{ display: 'flex', alignItems: 'center', gap: 5, padding: '4px 10px', background: Array.isArray(s.steps_json) && (s.steps_json as any[]).some((step: any) => step.needsReview) ? 'rgba(245,158,11,0.12)' : '#f5f5f5', border: `1px solid ${Array.isArray(s.steps_json) && (s.steps_json as any[]).some((step: any) => step.needsReview) ? 'rgba(245,158,11,0.3)' : '#e8eaed'}`, borderRadius: 6, color: Array.isArray(s.steps_json) && (s.steps_json as any[]).some((step: any) => step.needsReview) ? '#f59e0b' : '#888', textDecoration: 'none', fontSize: 11, fontWeight: 700 }}>
+                  {Array.isArray(s.steps_json) && (s.steps_json as any[]).some((step: any) => step.needsReview) ? <><AlertTriangle size={11} /> Review</> : 'Edit'}
+                </a>
+                <button
+                  onClick={() => togglePublish(s.id, s.published)}
+                  style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 5, padding: '4px 10px', background: s.published ? 'rgba(34,197,94,0.1)' : 'rgba(0,0,0,0.04)', border: `1px solid ${s.published ? 'rgba(34,197,94,0.3)' : '#e8eaed'}`, borderRadius: 6, color: s.published ? '#16a34a' : '#aaa', fontSize: 11, fontWeight: 700, cursor: 'pointer' }}
+                >
+                  {s.published ? '● Live' : '○ Draft'}
+                </button>
               </div>
             </div>
           ))}

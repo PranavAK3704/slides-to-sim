@@ -68,6 +68,7 @@ export interface Simulation {
   steps_json:   unknown;
   created_by:   string | null;
   created_at:   string;
+  published:    boolean | null;
 }
 
 export interface HubSummary {
