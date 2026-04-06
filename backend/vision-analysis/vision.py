@@ -51,6 +51,7 @@ DEFAULT TO "instructional" whenever you see a UI screenshot. Only use "informati
 Trainers annotate slides in many different ways. Look for ALL of these:
 
 A) NUMBERED MARKERS — any small shape (circle, square, badge, label) containing a digit placed on or near a UI element. Color doesn't matter: red, orange, yellow, blue, black. The NUMBER gives you the step order.
+   CRITICAL: If you see numbers (1), (2), (3) etc. — each number is a SEPARATE step. A slide with markers (1)(2)(3) must produce 3 steps, not 1. Never collapse multiple numbered actions into one step.
 
 B) HIGHLIGHT BOXES / BORDERS — any rectangle, outline, or border drawn around a UI element. Any color. If numbered → use the number. If not → use reading order (top-left first).
 

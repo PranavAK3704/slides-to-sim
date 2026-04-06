@@ -83,23 +83,49 @@ def parse_and_order(ingestion_result: dict, vision_result: dict) -> dict:
             logger.info(f"Slide {slide_id} (index {slide_index}): skipping — title/cover slide")
             continue
 
-        # If Gemini returned no steps but there's bottom text, synthesize a fallback step
+        # If Gemini returned no steps but there's bottom text, synthesize steps from it
         if not steps:
             bottom_text = slide_analysis.get("bottom_text", "").strip()
             if bottom_text and slide_type != "title":
                 logger.info(f"Slide {slide_id}: no steps from vision, synthesizing from bottom_text")
-                steps = [{
-                    "order": 1,
-                    "order_source": "text_hint",
-                    "annotation_type": "none",
-                    "element_label": "",
-                    "element_type": "unknown",
-                    "action": "click",
-                    "value": None,
-                    "hotspot": None,
-                    "instruction": bottom_text,
-                    "confidence": 0.4,
-                }]
+                # Split multi-action bottom text into individual steps
+                # e.g. "Go to RTO(1). Click RTO Manifest(2)." → 2 steps
+                import re as _re
+                action_re = _re.compile(
+                    r'(?:go to|click on|click|select|tap)\s+([A-Za-z][A-Za-z0-9 /\-]+?)\s*\((\d+)\)',
+                    _re.IGNORECASE
+                )
+                matches = list(action_re.finditer(bottom_text))
+                if len(matches) > 1:
+                    steps = [
+                        {
+                            "order": int(m.group(2)),
+                            "order_source": "text_hint",
+                            "annotation_type": "none",
+                            "element_label": m.group(1).strip(),
+                            "elementText": m.group(1).strip(),
+                            "element_type": "unknown",
+                            "action": "click",
+                            "value": None,
+                            "hotspot": None,
+                            "instruction": bottom_text,
+                            "confidence": 0.4,
+                        }
+                        for m in matches
+                    ]
+                else:
+                    steps = [{
+                        "order": 1,
+                        "order_source": "text_hint",
+                        "annotation_type": "none",
+                        "element_label": "",
+                        "element_type": "unknown",
+                        "action": "click",
+                        "value": None,
+                        "hotspot": None,
+                        "instruction": bottom_text,
+                        "confidence": 0.4,
+                    }]
             else:
                 logger.info(f"Slide {slide_id}: {slide_type} — skipping (no steps, no bottom text)")
                 continue
