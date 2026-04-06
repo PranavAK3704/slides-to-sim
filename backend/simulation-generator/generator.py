@@ -65,27 +65,24 @@ def _translate_to_hindi(instructions: list[str]) -> list[str]:
     return instructions
 
 
-def _extract_element_text(instruction: str) -> str:
+_SKIP_WORDS = {'all', 'the', 'it', 'this', 'that', 'here', 'or', 'scan'}
+_ACTION_RE  = re.compile(
+    r'(?:go to|click on|click|select|tap)\s+([A-Za-z][A-Za-z0-9 /\-]+?)\s*\(\d+\)',
+    re.IGNORECASE,
+)
+
+def _extract_all_element_texts(instruction: str) -> list:
     """
-    Parse elementText from instruction when Gemini left it blank.
-    Handles patterns like:
-      "Go to Inventory(1)"       → "Inventory"
-      "Click on Exceptions(2)"   → "Exceptions"
-      "Click Create Manifest(6)" → "Create Manifest"
-      "Click Yes(9)"             → "Yes"
-    Returns the first match, or empty string if none found.
+    Extract ALL clickable element names from an instruction string.
+    "Go to RTO(1). Click on RTO Manifest(2). Click Create Manifest(3)"
+    → ["RTO", "RTO Manifest", "Create Manifest"]
     """
-    if not instruction:
-        return ""
-    pattern = r'(?:go to|click on|click|select|tap)\s+([A-Za-z][A-Za-z0-9 /\-]+?)\s*\(\d+\)'
-    m = re.search(pattern, instruction, re.IGNORECASE)
-    if m:
+    results = []
+    for m in _ACTION_RE.finditer(instruction or ""):
         text = m.group(1).strip()
-        # Skip generic words that aren't real UI elements
-        skip = {'all', 'the', 'it', 'this', 'that', 'here'}
-        if text.lower() not in skip and len(text) > 1:
-            return text
-    return ""
+        if text and len(text) > 1 and text.lower() not in _SKIP_WORDS:
+            results.append(text)
+    return results
 
 
 def build_simulation_config(
@@ -106,29 +103,48 @@ def build_simulation_config(
     english_instructions = [s.get("instruction", "") for s in raw_steps]
     hindi_instructions = _translate_to_hindi(english_instructions)
 
-    sim_steps = []
+    # Expand multi-action steps before building final list
+    # e.g. "Go to RTO(1). Click RTO Manifest(2). Click Create Manifest(3)"
+    # becomes 3 separate steps, each with the right elementText
+    expanded_raws = []
+    expanded_english = []
+    expanded_hindi = []
     for i, raw in enumerate(raw_steps):
-        hotspot = raw.get("hotspot")
+        gemini_element = raw.get("element_text", raw.get("target", "")).strip()
+        instruction = english_instructions[i]
+        if gemini_element:
+            # Gemini already gave us a clean elementText — trust it, no expansion
+            expanded_raws.append((raw, gemini_element))
+            expanded_english.append(instruction)
+            expanded_hindi.append(hindi_instructions[i])
+        else:
+            # Parse all actions from instruction text
+            actions = _extract_all_element_texts(instruction)
+            if len(actions) <= 1:
+                expanded_raws.append((raw, actions[0] if actions else ""))
+                expanded_english.append(instruction)
+                expanded_hindi.append(hindi_instructions[i])
+            else:
+                # Split into one step per action
+                for action in actions:
+                    expanded_raws.append((raw, action))
+                    expanded_english.append(instruction)
+                    expanded_hindi.append(hindi_instructions[i])
 
-        # Determine the slide image URL
-        slide_image = raw.get("slide_image_url")
-
+    sim_steps = []
+    for i, (raw, element_text) in enumerate(expanded_raws):
         step = {
-            "stepNumber": raw.get("step", i + 1),
-            "instruction": english_instructions[i],
-            "hindiInstruction": hindi_instructions[i],
+            "stepNumber": i + 1,
+            "instruction": expanded_english[i],
+            "hindiInstruction": expanded_hindi[i],
             "action": raw.get("action", "click"),
             "value": raw.get("value"),
             "hint": raw.get("hint", ""),
-            # Hotspot in % coords — used for spotlight overlay
-            "hotspot": hotspot,
-            # Slide image is the simulation background
-            "slideImage": slide_image,
-            # Confidence + review flag
+            "hotspot": raw.get("hotspot"),
+            "slideImage": raw.get("slide_image_url"),
             "needsReview": raw.get("needs_review", False),
-            # Live overlay fields — use Gemini's value, fall back to parsing instruction
-            "elementText": raw.get("element_text", raw.get("target", "")) or _extract_element_text(english_instructions[i]),
-            "urlPattern":  raw.get("url_pattern", ""),
+            "elementText": element_text,
+            "urlPattern": raw.get("url_pattern", ""),
             "isSafeAction": raw.get("is_safe_action", True),
             "meta": {
                 "target": raw.get("target"),
@@ -140,7 +156,7 @@ def build_simulation_config(
         }
         sim_steps.append(step)
 
-    review_count = sum(1 for s in sim_steps if s["needsReview"])
+    review_count = sum(1 for s in sim_steps if s.get("needsReview"))
 
     config = {
         "id": sim_id,
