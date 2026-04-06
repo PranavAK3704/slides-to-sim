@@ -65,6 +65,29 @@ def _translate_to_hindi(instructions: list[str]) -> list[str]:
     return instructions
 
 
+def _extract_element_text(instruction: str) -> str:
+    """
+    Parse elementText from instruction when Gemini left it blank.
+    Handles patterns like:
+      "Go to Inventory(1)"       → "Inventory"
+      "Click on Exceptions(2)"   → "Exceptions"
+      "Click Create Manifest(6)" → "Create Manifest"
+      "Click Yes(9)"             → "Yes"
+    Returns the first match, or empty string if none found.
+    """
+    if not instruction:
+        return ""
+    pattern = r'(?:go to|click on|click|select|tap)\s+([A-Za-z][A-Za-z0-9 /\-]+?)\s*\(\d+\)'
+    m = re.search(pattern, instruction, re.IGNORECASE)
+    if m:
+        text = m.group(1).strip()
+        # Skip generic words that aren't real UI elements
+        skip = {'all', 'the', 'it', 'this', 'that', 'here'}
+        if text.lower() not in skip and len(text) > 1:
+            return text
+    return ""
+
+
 def build_simulation_config(
     workflow: dict,
     ingestion_result: dict = None,
@@ -103,8 +126,8 @@ def build_simulation_config(
             "slideImage": slide_image,
             # Confidence + review flag
             "needsReview": raw.get("needs_review", False),
-            # Live overlay fields
-            "elementText": raw.get("element_text", raw.get("target", "")),
+            # Live overlay fields — use Gemini's value, fall back to parsing instruction
+            "elementText": raw.get("element_text", raw.get("target", "")) or _extract_element_text(english_instructions[i]),
             "urlPattern":  raw.get("url_pattern", ""),
             "isSafeAction": raw.get("is_safe_action", True),
             "meta": {
