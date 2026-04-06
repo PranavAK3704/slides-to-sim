@@ -285,12 +285,33 @@ def get_simulation(sim_id: str):
             sim = json.load(f)
             simulations[sim_id] = sim
             return sim
+    # Fallback: load from Supabase (Render /tmp is ephemeral)
+    sb = _get_supabase()
+    if sb:
+        try:
+            res = sb.table("simulations").select("*").eq("id", sim_id).single().execute()
+            row = res.data
+            if row:
+                sim = {
+                    "id": row["id"],
+                    "title": row.get("title", ""),
+                    "stepCount": len(row.get("steps_json") or []),
+                    "createdAt": row.get("created_at", ""),
+                    "steps": row.get("steps_json") or [],
+                    "published": row.get("published", False),
+                    "process_name": row.get("process_name", ""),
+                }
+                simulations[sim_id] = sim
+                return sim
+        except Exception as e:
+            logger.warning(f"Supabase fallback failed for {sim_id}: {e}")
     raise HTTPException(status_code=404, detail="Simulation not found")
 
 
 @app.get("/api/simulations")
 def list_simulations():
     sims = []
+    # First try local files
     for path in (OUTPUT_DIR / "simulations").glob("*.json"):
         try:
             with open(path) as f:
@@ -300,10 +321,32 @@ def list_simulations():
                     "title": sim.get("title"),
                     "stepCount": sim.get("stepCount"),
                     "createdAt": sim.get("createdAt"),
-                    "domMatched": sim.get("domMatched", False),
+                    "needsReview": sim.get("needsReview", False),
+                    "published": sim.get("published", False),
+                    "process_name": sim.get("process_name", ""),
                 })
         except Exception:
             continue
+    # Fallback: load from Supabase if no local files (Render ephemeral /tmp)
+    if not sims:
+        sb = _get_supabase()
+        if sb:
+            try:
+                res = sb.table("simulations").select("id,title,process_name,created_at,published,steps_json").order("created_at", desc=True).execute()
+                for row in (res.data or []):
+                    steps = row.get("steps_json") or []
+                    needs_review = any(s.get("needs_review") or s.get("needsReview") for s in steps)
+                    sims.append({
+                        "id": row["id"],
+                        "title": row.get("title", ""),
+                        "stepCount": len(steps),
+                        "createdAt": row.get("created_at", ""),
+                        "needsReview": needs_review,
+                        "published": row.get("published", False),
+                        "process_name": row.get("process_name", ""),
+                    })
+            except Exception as e:
+                logger.warning(f"Supabase list fallback failed: {e}")
     sims.sort(key=lambda s: s.get("createdAt", ""), reverse=True)
     return sims
 
