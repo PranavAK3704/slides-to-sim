@@ -73,10 +73,15 @@ def parse_and_order(ingestion_result: dict, vision_result: dict) -> dict:
     all_steps = []
     global_counter = 1
 
-    for slide_analysis in slide_analyses:
+    for slide_index, slide_analysis in enumerate(slide_analyses):
         slide_id = slide_analysis.get("slide_id")
         slide_type = slide_analysis.get("slide_type", "instructional")
         steps = slide_analysis.get("steps", [])
+
+        # Always skip the first slide (cover/title) and any slide Gemini classifies as title
+        if slide_index == 0 or slide_type == "title":
+            logger.info(f"Slide {slide_id} (index {slide_index}): skipping — title/cover slide")
+            continue
 
         # If Gemini returned no steps but there's bottom text, synthesize a fallback step
         if not steps:

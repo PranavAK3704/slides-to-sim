@@ -107,6 +107,24 @@ annotation_type: "numbered_box" | "box" | "arrow" | "circle" | "highlight" | "un
 element_type: "button" | "tab" | "input" | "dropdown" | "link" | "menu" | "icon" | "checkbox" | "unknown"
 action: "click" | "type" | "select" | "hover" | "scroll" | "verify"
 slide_type: "instructional" | "informational" | "title"
+
+=== RULES FOR elementText / urlPattern / isSafeAction ===
+
+elementText — the EXACT text a user sees on the button, tab, or link. Strip everything else:
+  - "Go to Inventory(1)"  →  elementText = "Inventory"
+  - "Click on Exceptions(2)"  →  elementText = "Exceptions"
+  - "Click the + Create button"  →  elementText = "+ Create" or "Create"
+  No parentheses. No step numbers. No verbs like "Go to" or "Click on".
+  This must literally match the DOM text the user would read on screen.
+
+urlPattern — a URL fragment visible in the UI (tab labels, breadcrumbs, page title, sidebar
+  active item, or any URL segment shown). Keep it short: "sc-overview", "rto/dashboard",
+  "inventory", "exceptions". Use "" if you cannot determine it.
+
+isSafeAction — true for read-only navigation (clicking tabs, opening pages, viewing data,
+  using search/filters). false for any write operation (Save, Submit, Create, Bag, Receive,
+  Complete, Confirm, Dispatch, Delete, Upload). Default to false when unsure — safer to
+  intercept than to accidentally submit real data.
 elementText: the EXACT visible text of the element — must match what a user would read on screen (this is used for DOM text matching on the live app)
 urlPattern: a short string that should appear in the browser URL when on this page (e.g. "rto", "forward", "exceptions", "dashboard") — use "" if unknown
 isSafeAction: true if the action only navigates or reads data; false if it creates, submits, updates, or deletes records
