@@ -97,3 +97,13 @@ export interface ProcessStep {
   created_at:   string;
   updated_at:   string;
 }
+
+export interface ProcessVideo {
+  id:           string;
+  process_name: string;
+  hub:          string | null;
+  video_url:    string;
+  title:        string | null;
+  starting_tab: string | null;
+  created_at:   string;
+}
