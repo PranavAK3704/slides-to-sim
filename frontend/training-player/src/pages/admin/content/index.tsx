@@ -1,7 +1,7 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import AdminLayout from '@/components/AdminLayout';
-import { supabase, Simulation } from '@/lib/supabase';
-import { Plus, Loader, CheckCircle, XCircle, BookOpen, Trash2, ExternalLink, AlertTriangle, Download } from 'lucide-react';
+import { supabase, Simulation, ProcessStep, DetectionStep } from '@/lib/supabase';
+import { Plus, Loader, CheckCircle, XCircle, BookOpen, Trash2, ExternalLink, AlertTriangle, Download, ChevronDown, ChevronRight, Globe, Save, ListChecks } from 'lucide-react';
 
 const API = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
 
@@ -263,10 +263,155 @@ function restart(){cur=0;wrong=0;t0=Date.now();$('fin').className='';render();}
   URL.revokeObjectURL(url);
 }
 
-// ─── Main page ───────────────────────────────────────────────────────────────
+// ─── Types ────────────────────────────────────────────────────────────────────
+
+interface ProcessEntry {
+  processName:    string;
+  hub:            string | null;
+  // detection steps (from process_steps table)
+  stepsId:        string | null;
+  stepsSource:    string | null;
+  detectionSteps: DetectionStep[];
+  stepsPublished: boolean;
+  // simulation (from simulations table, optional)
+  sim:            Simulation | null;
+}
+
+// ─── Inline step editor ───────────────────────────────────────────────────────
+
+function StepsSection({ entry, onSaved }: { entry: ProcessEntry; onSaved: (steps: DetectionStep[], stepsId: string) => void }) {
+  const [open,    setOpen]    = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [steps,   setSteps]   = useState<DetectionStep[]>(entry.detectionSteps);
+  const [saving,  setSaving]  = useState(false);
+
+  useEffect(() => { setSteps(entry.detectionSteps); }, [entry.detectionSteps]);
+
+  const save = async () => {
+    setSaving(true);
+    const payload = {
+      process_name: entry.processName,
+      hub:          entry.hub || null,
+      source:       entry.stepsId ? (entry.stepsSource || 'manual') : 'manual',
+      steps:        steps.map((s, i) => ({ order: i + 1, elementText: s.elementText.trim(), urlPattern: s.urlPattern.trim() })),
+      published:    entry.stepsPublished,
+      updated_at:   new Date().toISOString(),
+    };
+    let id = entry.stepsId;
+    if (id) {
+      await supabase.from('process_steps').update(payload).eq('id', id);
+    } else {
+      const { data } = await supabase.from('process_steps').insert(payload).select('id').single();
+      id = data?.id ?? null;
+    }
+    setSaving(false);
+    setEditing(false);
+    if (id) onSaved(steps, id);
+  };
+
+  const addStep  = () => setSteps(s => [...s, { order: s.length + 1, elementText: '', urlPattern: '' }]);
+  const delStep  = (i: number) => setSteps(s => s.filter((_, idx) => idx !== i).map((x, idx) => ({ ...x, order: idx + 1 })));
+  const setStep  = (i: number, field: keyof DetectionStep, val: string) =>
+    setSteps(s => s.map((x, idx) => idx === i ? { ...x, [field]: val } : x));
+
+  const sourceColor: Record<string, string> = { gemini: '#9747FF', ppt: '#f59e0b', manual: '#22c55e' };
+  const src = entry.stepsSource || 'manual';
+
+  return (
+    <div style={{ borderTop: '1px solid #f3f4f6', marginTop: 4, paddingTop: 10 }}>
+      {/* Header row */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }} onClick={() => { if (!editing) setOpen(o => !o); }}>
+        {open ? <ChevronDown size={13} color="#9ca3af" /> : <ChevronRight size={13} color="#9ca3af" />}
+        <ListChecks size={13} color="#9ca3af" />
+        <span style={{ fontSize: 12, color: '#555', fontWeight: 600 }}>
+          Detection Steps
+          <span style={{ fontWeight: 400, color: '#aaa', marginLeft: 4 }}>({steps.length})</span>
+        </span>
+        {entry.stepsId && (
+          <span style={{ fontSize: 10, fontWeight: 700, padding: '1px 6px', borderRadius: 10,
+            background: `${sourceColor[src]}18`, color: sourceColor[src], textTransform: 'uppercase' }}>
+            {src}
+          </span>
+        )}
+        {!entry.stepsId && (
+          <span style={{ fontSize: 10, color: '#ef4444', fontWeight: 600 }}>no steps yet</span>
+        )}
+        <div style={{ marginLeft: 'auto' }} onClick={e => e.stopPropagation()}>
+          {editing ? (
+            <div style={{ display: 'flex', gap: 6 }}>
+              <button onClick={() => { setEditing(false); setSteps(entry.detectionSteps); }}
+                style={{ fontSize: 11, padding: '3px 8px', borderRadius: 5, border: '1px solid #e5e7eb', background: '#fff', cursor: 'pointer', color: '#666' }}>
+                Cancel
+              </button>
+              <button onClick={save} disabled={saving}
+                style={{ fontSize: 11, padding: '3px 8px', borderRadius: 5, border: 'none',
+                  background: 'linear-gradient(135deg,#F43397,#9747FF)', color: '#fff', cursor: 'pointer',
+                  display: 'flex', alignItems: 'center', gap: 4 }}>
+                <Save size={10} /> {saving ? 'Saving…' : 'Save'}
+              </button>
+            </div>
+          ) : (
+            <button onClick={() => { setOpen(true); setEditing(true); }}
+              style={{ fontSize: 11, padding: '3px 8px', borderRadius: 5, border: '1px solid #e5e7eb',
+                background: '#fff', cursor: 'pointer', color: '#666' }}>
+              Edit
+            </button>
+          )}
+        </div>
+      </div>
+
+      {/* Step list */}
+      {open && (
+        <div style={{ marginTop: 8, paddingLeft: 21 }}>
+          {steps.length === 0 && !editing && (
+            <div style={{ fontSize: 11, color: '#ccc', paddingBottom: 4 }}>No steps configured — click Edit to add</div>
+          )}
+          {steps.map((step, i) => (
+            <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 5 }}>
+              <span style={{ width: 18, height: 18, borderRadius: '50%',
+                background: 'linear-gradient(135deg,#F43397,#9747FF)',
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                fontSize: 9, fontWeight: 700, color: '#fff', flexShrink: 0 }}>{i + 1}</span>
+              {editing ? (
+                <>
+                  <input value={step.elementText} onChange={e => setStep(i, 'elementText', e.target.value)}
+                    placeholder="Element text"
+                    style={{ flex: 2, padding: '4px 8px', borderRadius: 5, border: '1px solid #e5e7eb', fontSize: 11 }} />
+                  <Globe size={10} color="#9ca3af" />
+                  <input value={step.urlPattern} onChange={e => setStep(i, 'urlPattern', e.target.value)}
+                    placeholder="url fragment"
+                    style={{ flex: 1, padding: '4px 8px', borderRadius: 5, border: '1px solid #e5e7eb', fontSize: 11 }} />
+                  <button onClick={() => delStep(i)}
+                    style={{ border: 'none', background: 'none', cursor: 'pointer', color: '#d1d5db', padding: 2 }}>
+                    <Trash2 size={11} />
+                  </button>
+                </>
+              ) : (
+                <span style={{ fontSize: 11, color: '#444' }}>
+                  {step.elementText}
+                  {step.urlPattern && <span style={{ color: '#9ca3af', marginLeft: 6 }}>/{step.urlPattern}</span>}
+                </span>
+              )}
+            </div>
+          ))}
+          {editing && (
+            <button onClick={addStep}
+              style={{ marginTop: 4, fontSize: 11, padding: '4px 10px', borderRadius: 5,
+                border: '1px dashed #d1d5db', background: 'none', cursor: 'pointer', color: '#9ca3af',
+                display: 'flex', alignItems: 'center', gap: 4 }}>
+              <Plus size={10} /> Add Step
+            </button>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Main page ────────────────────────────────────────────────────────────────
 
 export default function ContentPage() {
-  const [sims,        setSims]        = useState<Simulation[]>([]);
+  const [entries,     setEntries]     = useState<ProcessEntry[]>([]);
   const [loading,     setLoading]     = useState(true);
   const [slidesUrl,   setSlidesUrl]   = useState('');
   const [processName, setProcessName] = useState('');
@@ -276,13 +421,43 @@ export default function ContentPage() {
   const [formOpen,    setFormOpen]    = useState(false);
   const [exporting,   setExporting]   = useState<string | null>(null);
 
-  const loadSims = async () => {
-    const { data } = await supabase.from('simulations').select('*').order('created_at', { ascending: false });
-    if (data) setSims(data);
-    setLoading(false);
-  };
+  const load = useCallback(async () => {
+    const [simsRes, stepsRes] = await Promise.all([
+      supabase.from('simulations').select('*').order('created_at', { ascending: false }),
+      supabase.from('process_steps').select('*').order('process_name'),
+    ]);
+    const sims  = (simsRes.data  as Simulation[]   ) || [];
+    const steps = (stepsRes.data as ProcessStep[]  ) || [];
 
-  useEffect(() => { loadSims(); }, []);
+    // Build merged map keyed by process_name
+    const map = new Map<string, ProcessEntry>();
+
+    for (const sim of sims) {
+      const key = sim.process_name || sim.title;
+      map.set(key, {
+        processName: key, hub: sim.hub,
+        stepsId: null, stepsSource: null, detectionSteps: [], stepsPublished: true,
+        sim,
+      });
+    }
+    for (const ps of steps) {
+      const key = ps.process_name;
+      const existing = map.get(key);
+      map.set(key, {
+        ...(existing ?? { processName: key, hub: ps.hub, sim: null }),
+        stepsId:        ps.id,
+        stepsSource:    ps.source,
+        detectionSteps: (ps.steps as DetectionStep[]) || [],
+        stepsPublished: ps.published,
+        hub:            ps.hub ?? existing?.hub ?? null,
+      });
+    }
+
+    setEntries(Array.from(map.values()));
+    setLoading(false);
+  }, []);
+
+  useEffect(() => { load(); }, [load]);
 
   // Poll job status
   useEffect(() => {
@@ -308,7 +483,7 @@ export default function ContentPage() {
               created_by:   'admin',
               created_at:   new Date().toISOString(),
             });
-            loadSims();
+            load();
           }
         } else if (data.status === 'error') {
           setJobStatus('error');
@@ -317,7 +492,7 @@ export default function ContentPage() {
       } catch { /* keep polling */ }
     }, 2000);
     return () => clearInterval(interval);
-  }, [job, jobStatus, processName, hub]);
+  }, [job, jobStatus, processName, hub, load]);
 
   const generate = async () => {
     if (!slidesUrl.trim()) return;
@@ -327,7 +502,7 @@ export default function ContentPage() {
       const res  = await fetch(`${API}/api/generate`, {
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({ slides_url: slidesUrl }),
+        body:    JSON.stringify({ slides_url: slidesUrl, process_name: processName || null, hub: hub || null }),
       });
       const data: Job = await res.json();
       setJob(data);
@@ -337,30 +512,46 @@ export default function ContentPage() {
     }
   };
 
-  const deleteSim = async (id: string) => {
-    if (!confirm('Delete this simulation?')) return;
-    await supabase.from('simulations').delete().eq('id', id);
-    setSims(prev => prev.filter(s => s.id !== id));
+  const addManualProcess = async () => {
+    const name = prompt('Process name (e.g. RTO Bagging):')?.trim();
+    if (!name) return;
+    const { data } = await supabase.from('process_steps').insert({
+      process_name: name, hub: null, source: 'manual', steps: [], published: true,
+    }).select().single();
+    if (data) load();
   };
 
-  const togglePublish = async (id: string, current: boolean | null) => {
-    const next = !current;
-    await supabase.from('simulations').update({ published: next }).eq('id', id);
-    setSims(prev => prev.map(s => s.id === id ? { ...s, published: next } : s));
+  const deleteEntry = async (entry: ProcessEntry) => {
+    const label = entry.sim ? 'Delete this process and its simulation?' : 'Delete this process?';
+    if (!confirm(label)) return;
+    if (entry.sim)    await supabase.from('simulations').delete().eq('id', entry.sim.id);
+    if (entry.stepsId) await supabase.from('process_steps').delete().eq('id', entry.stepsId);
+    setEntries(e => e.filter(x => x.processName !== entry.processName));
+  };
+
+  const togglePublish = async (entry: ProcessEntry) => {
+    const next = !entry.stepsPublished;
+    if (entry.stepsId) {
+      await supabase.from('process_steps').update({ published: next }).eq('id', entry.stepsId);
+      setEntries(e => e.map(x => x.processName === entry.processName ? { ...x, stepsPublished: next } : x));
+    }
   };
 
   const handleScormExport = async (sim: Simulation) => {
     setExporting(sim.id);
-    try {
-      await downloadScorm(sim);
-    } finally {
-      setExporting(null);
-    }
+    try { await downloadScorm(sim); } finally { setExporting(null); }
+  };
+
+  const onStepsSaved = (processName: string, steps: DetectionStep[], stepsId: string) => {
+    setEntries(e => e.map(x => x.processName === processName
+      ? { ...x, detectionSteps: steps, stepsId, stepsSource: x.stepsSource || 'manual' }
+      : x
+    ));
   };
 
   return (
-    <AdminLayout title="Simulations">
-      {/* Generation status banner */}
+    <AdminLayout title="Processes">
+      {/* Generation status banners */}
       {jobStatus === 'running' && job && (
         <div style={{ background: 'rgba(151,71,255,0.08)', border: '1px solid rgba(151,71,255,0.2)', borderRadius: 12, padding: '16px 20px', marginBottom: 20, display: 'flex', alignItems: 'center', gap: 14 }}>
           <Loader size={18} color="#9747FF" style={{ animation: 'spin 1s linear infinite' }} />
@@ -376,7 +567,7 @@ export default function ContentPage() {
       {jobStatus === 'complete' && (
         <div style={{ background: 'rgba(34,197,94,0.08)', border: '1px solid rgba(34,197,94,0.2)', borderRadius: 12, padding: '14px 20px', marginBottom: 20, display: 'flex', gap: 10, alignItems: 'center' }}>
           <CheckCircle size={18} color="#22c55e" />
-          <span style={{ fontSize: 13, color: '#1a1a2e', fontWeight: 600 }}>Simulation generated and saved!</span>
+          <span style={{ fontSize: 13, color: '#1a1a2e', fontWeight: 600 }}>Simulation generated — steps auto-populated for PCT detection.</span>
           <button onClick={() => { setJobStatus('idle'); setJob(null); setSlidesUrl(''); setProcessName(''); setHub(''); }} style={{ marginLeft: 'auto', fontSize: 12, color: '#888', background: 'none', border: 'none', cursor: 'pointer' }}>Dismiss</button>
         </div>
       )}
@@ -390,13 +581,18 @@ export default function ContentPage() {
 
       {/* Header */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
-        <div style={{ fontSize: 13, color: '#888' }}>{sims.length} simulation{sims.length !== 1 ? 's' : ''}</div>
-        <button onClick={() => setFormOpen(!formOpen)} disabled={jobStatus === 'running'} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 18px', background: 'linear-gradient(135deg,#F43397,#9747FF)', color: '#fff', border: 'none', borderRadius: 10, fontSize: 13, fontWeight: 700, cursor: 'pointer', opacity: jobStatus === 'running' ? 0.6 : 1 }}>
-          <Plus size={16} /> New Simulation
-        </button>
+        <div style={{ fontSize: 13, color: '#888' }}>{entries.length} process{entries.length !== 1 ? 'es' : ''}</div>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <button onClick={addManualProcess} style={{ display: 'flex', alignItems: 'center', gap: 7, padding: '9px 14px', background: '#fff', color: '#555', border: '1.5px solid #e8eaed', borderRadius: 9, fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>
+            <Plus size={14} /> New Process
+          </button>
+          <button onClick={() => setFormOpen(!formOpen)} disabled={jobStatus === 'running'} style={{ display: 'flex', alignItems: 'center', gap: 7, padding: '9px 16px', background: 'linear-gradient(135deg,#F43397,#9747FF)', color: '#fff', border: 'none', borderRadius: 9, fontSize: 13, fontWeight: 700, cursor: 'pointer', opacity: jobStatus === 'running' ? 0.6 : 1 }}>
+            <Plus size={14} /> Generate Simulation
+          </button>
+        </div>
       </div>
 
-      {/* Create form */}
+      {/* Generate form */}
       {formOpen && (
         <div style={{ background: '#fff', borderRadius: 14, padding: 24, boxShadow: '0 4px 20px rgba(0,0,0,0.1)', marginBottom: 24 }}>
           <div style={{ fontSize: 15, fontWeight: 700, color: '#1a1a2e', marginBottom: 20 }}>Generate Simulation from Google Slides</div>
@@ -407,7 +603,7 @@ export default function ContentPage() {
             </div>
             <div>
               <label style={{ fontSize: 11, fontWeight: 600, color: '#666', textTransform: 'uppercase', letterSpacing: 0.5, display: 'block', marginBottom: 6 }}>Process Name</label>
-              <input value={processName} onChange={e => setProcessName(e.target.value)} placeholder="e.g. ATO Bagging" style={{ width: '100%', padding: '10px 14px', border: '1.5px solid #e8eaed', borderRadius: 8, fontSize: 13, boxSizing: 'border-box' }} />
+              <input value={processName} onChange={e => setProcessName(e.target.value)} placeholder="e.g. RTO Bagging" style={{ width: '100%', padding: '10px 14px', border: '1.5px solid #e8eaed', borderRadius: 8, fontSize: 13, boxSizing: 'border-box' }} />
             </div>
             <div>
               <label style={{ fontSize: 11, fontWeight: 600, color: '#666', textTransform: 'uppercase', letterSpacing: 0.5, display: 'block', marginBottom: 6 }}>Hub (optional)</label>
@@ -418,9 +614,7 @@ export default function ContentPage() {
             </div>
           </div>
           <div style={{ display: 'flex', gap: 10, marginTop: 18 }}>
-            <button onClick={generate} disabled={!slidesUrl.trim()} style={{ padding: '10px 24px', background: 'linear-gradient(135deg,#F43397,#9747FF)', color: '#fff', border: 'none', borderRadius: 8, fontSize: 13, fontWeight: 700, cursor: 'pointer', opacity: !slidesUrl.trim() ? 0.5 : 1 }}>
-              Generate
-            </button>
+            <button onClick={generate} disabled={!slidesUrl.trim()} style={{ padding: '10px 24px', background: 'linear-gradient(135deg,#F43397,#9747FF)', color: '#fff', border: 'none', borderRadius: 8, fontSize: 13, fontWeight: 700, cursor: 'pointer', opacity: !slidesUrl.trim() ? 0.5 : 1 }}>Generate</button>
             <button onClick={() => setFormOpen(false)} style={{ padding: '10px 18px', background: '#f5f5f5', border: 'none', borderRadius: 8, fontSize: 13, cursor: 'pointer', color: '#555' }}>Cancel</button>
           </div>
           <div style={{ fontSize: 11, color: '#aaa', marginTop: 12 }}>
@@ -429,60 +623,74 @@ export default function ContentPage() {
         </div>
       )}
 
-      {/* Simulation library */}
+      {/* Process cards */}
       {loading ? (
-        <div style={{ textAlign: 'center', padding: 40, color: '#bbb' }}>Loading simulations...</div>
-      ) : sims.length === 0 ? (
+        <div style={{ textAlign: 'center', padding: 40, color: '#bbb' }}>Loading…</div>
+      ) : entries.length === 0 ? (
         <div style={{ textAlign: 'center', padding: 60, color: '#bbb' }}>
           <BookOpen size={40} style={{ marginBottom: 16, opacity: 0.3 }} />
-          <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 8 }}>No simulations yet</div>
-          <div style={{ fontSize: 13 }}>Create your first simulation from a Google Slides deck above.</div>
+          <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 8 }}>No processes yet</div>
+          <div style={{ fontSize: 13 }}>Add a process manually or generate one from a Google Slides deck.</div>
         </div>
       ) : (
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: 16 }}>
-          {sims.map(s => (
-            <div key={s.id} style={{ background: '#fff', borderRadius: 12, padding: 20, boxShadow: '0 1px 4px rgba(0,0,0,0.06)', display: 'flex', flexDirection: 'column', gap: 12 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))', gap: 16 }}>
+          {entries.map(entry => (
+            <div key={entry.processName} style={{ background: '#fff', borderRadius: 12, padding: 18, boxShadow: '0 1px 4px rgba(0,0,0,0.06)', display: 'flex', flexDirection: 'column', gap: 10 }}>
+              {/* Title row */}
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
                 <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontWeight: 700, color: '#1a1a2e', fontSize: 14, marginBottom: 4, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.title}</div>
-                  {s.process_name && <div style={{ fontSize: 12, color: '#F43397', fontWeight: 600 }}>{s.process_name}</div>}
+                  <div style={{ fontWeight: 700, color: '#1a1a2e', fontSize: 14, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{entry.processName}</div>
+                  {entry.hub && <div style={{ fontSize: 11, color: '#888', marginTop: 2 }}>📍 {entry.hub}</div>}
                 </div>
-                <button onClick={() => deleteSim(s.id)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#ddd', padding: 4, flexShrink: 0 }}>
+                <button onClick={() => deleteEntry(entry)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#e5e7eb', padding: 4, flexShrink: 0 }}>
                   <Trash2 size={14} />
                 </button>
               </div>
 
-              <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-                {s.hub && <span style={{ fontSize: 11, padding: '2px 8px', borderRadius: 10, background: '#f0f0f0', color: '#555' }}>📍 {s.hub}</span>}
-                <span style={{ fontSize: 11, padding: '2px 8px', borderRadius: 10, background: '#f0f0f0', color: '#555' }}>{s.step_count} steps</span>
-                <span style={{ fontSize: 11, padding: '2px 8px', borderRadius: 10, background: 'rgba(151,71,255,0.1)', color: '#9747FF' }}>
-                  {new Date(s.created_at).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}
-                </span>
-              </div>
+              {/* Simulation section */}
+              {entry.sim ? (
+                <>
+                  <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                    <span style={{ fontSize: 11, padding: '2px 8px', borderRadius: 10, background: 'rgba(151,71,255,0.08)', color: '#9747FF' }}>
+                      {entry.sim.step_count} training steps
+                    </span>
+                    <span style={{ fontSize: 11, padding: '2px 8px', borderRadius: 10, background: '#f0f0f0', color: '#555' }}>
+                      {new Date(entry.sim.created_at).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}
+                    </span>
+                    {Array.isArray(entry.sim.steps_json) && (entry.sim.steps_json as any[]).some((s: any) => s.needsReview) && (
+                      <span style={{ fontSize: 11, padding: '2px 8px', borderRadius: 10, background: 'rgba(245,158,11,0.1)', color: '#f59e0b', fontWeight: 700 }}>⚠ needs review</span>
+                    )}
+                  </div>
+                  <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
+                    <a href={`/sim/${entry.sim.id}`} target="_blank" rel="noreferrer" style={{ display: 'flex', alignItems: 'center', gap: 4, color: '#9747FF', textDecoration: 'none', fontSize: 12, fontWeight: 600 }}>
+                      <ExternalLink size={11} /> Preview
+                    </a>
+                    <button onClick={() => handleScormExport(entry.sim!)} disabled={exporting === entry.sim.id}
+                      style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '3px 9px', background: 'rgba(99,102,241,0.08)', border: '1px solid rgba(99,102,241,0.25)', borderRadius: 6, color: '#6366f1', fontSize: 11, fontWeight: 700, cursor: 'pointer', opacity: exporting === entry.sim.id ? 0.5 : 1 }}>
+                      <Download size={10} /> {exporting === entry.sim.id ? 'Exporting…' : 'SCORM'}
+                    </button>
+                    <a href={`/admin/simulations/${entry.sim.id}/review`}
+                      style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '3px 9px',
+                        background: Array.isArray(entry.sim.steps_json) && (entry.sim.steps_json as any[]).some((s: any) => s.needsReview) ? 'rgba(245,158,11,0.12)' : '#f5f5f5',
+                        border: `1px solid ${Array.isArray(entry.sim.steps_json) && (entry.sim.steps_json as any[]).some((s: any) => s.needsReview) ? 'rgba(245,158,11,0.3)' : '#e8eaed'}`,
+                        borderRadius: 6, fontSize: 11, fontWeight: 700, textDecoration: 'none',
+                        color: Array.isArray(entry.sim.steps_json) && (entry.sim.steps_json as any[]).some((s: any) => s.needsReview) ? '#f59e0b' : '#888' }}>
+                      {Array.isArray(entry.sim.steps_json) && (entry.sim.steps_json as any[]).some((s: any) => s.needsReview) ? <><AlertTriangle size={10} /> Review</> : 'Edit'}
+                    </a>
+                    <button onClick={() => togglePublish(entry)} style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 4, padding: '3px 9px',
+                      background: entry.stepsPublished ? 'rgba(34,197,94,0.1)' : 'rgba(0,0,0,0.04)',
+                      border: `1px solid ${entry.stepsPublished ? 'rgba(34,197,94,0.3)' : '#e8eaed'}`,
+                      borderRadius: 6, color: entry.stepsPublished ? '#16a34a' : '#aaa', fontSize: 11, fontWeight: 700, cursor: 'pointer' }}>
+                      {entry.stepsPublished ? '● Live' : '○ Draft'}
+                    </button>
+                  </div>
+                </>
+              ) : (
+                <div style={{ fontSize: 12, color: '#ccc', fontStyle: 'italic' }}>Steps only — no simulation</div>
+              )}
 
-              <div style={{ display: 'flex', gap: 8, marginTop: 'auto', alignItems: 'center', flexWrap: 'wrap' }}>
-                <a href={`/sim/${s.id}`} target="_blank" rel="noreferrer" style={{ display: 'flex', alignItems: 'center', gap: 5, color: '#9747FF', textDecoration: 'none', fontSize: 12, fontWeight: 600 }}>
-                  <ExternalLink size={12} /> Preview
-                </a>
-
-                <button
-                  onClick={() => handleScormExport(s)}
-                  disabled={exporting === s.id}
-                  style={{ display: 'flex', alignItems: 'center', gap: 5, padding: '4px 10px', background: 'rgba(99,102,241,0.08)', border: '1px solid rgba(99,102,241,0.25)', borderRadius: 6, color: '#6366f1', fontSize: 11, fontWeight: 700, cursor: 'pointer', opacity: exporting === s.id ? 0.5 : 1 }}
-                >
-                  <Download size={11} /> {exporting === s.id ? 'Exporting…' : 'SCORM'}
-                </button>
-
-                <a href={`/admin/simulations/${s.id}/review`} style={{ display: 'flex', alignItems: 'center', gap: 5, padding: '4px 10px', background: Array.isArray(s.steps_json) && (s.steps_json as any[]).some((step: any) => step.needsReview) ? 'rgba(245,158,11,0.12)' : '#f5f5f5', border: `1px solid ${Array.isArray(s.steps_json) && (s.steps_json as any[]).some((step: any) => step.needsReview) ? 'rgba(245,158,11,0.3)' : '#e8eaed'}`, borderRadius: 6, color: Array.isArray(s.steps_json) && (s.steps_json as any[]).some((step: any) => step.needsReview) ? '#f59e0b' : '#888', textDecoration: 'none', fontSize: 11, fontWeight: 700 }}>
-                  {Array.isArray(s.steps_json) && (s.steps_json as any[]).some((step: any) => step.needsReview) ? <><AlertTriangle size={11} /> Review</> : 'Edit'}
-                </a>
-                <button
-                  onClick={() => togglePublish(s.id, s.published)}
-                  style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 5, padding: '4px 10px', background: s.published ? 'rgba(34,197,94,0.1)' : 'rgba(0,0,0,0.04)', border: `1px solid ${s.published ? 'rgba(34,197,94,0.3)' : '#e8eaed'}`, borderRadius: 6, color: s.published ? '#16a34a' : '#aaa', fontSize: 11, fontWeight: 700, cursor: 'pointer' }}
-                >
-                  {s.published ? '● Live' : '○ Draft'}
-                </button>
-              </div>
+              {/* Detection steps inline editor */}
+              <StepsSection entry={entry} onSaved={(steps, id) => onStepsSaved(entry.processName, steps, id)} />
             </div>
           ))}
         </div>
