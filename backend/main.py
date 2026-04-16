@@ -522,35 +522,11 @@ async def import_ppt(
         # Use provided process_name for the first (or only) segment;
         # remaining segments keep their auto-detected names.
         results = []
-        sb = _get_supabase()
-
         for i, seg in enumerate(extracted):
             pname = process_name if i == 0 else seg['process_name']
-            steps = seg['steps']
+            results.append({"process_name": pname, "hub": hub or None, "steps": seg['steps']})
 
-            if sb:
-                existing = sb.table("process_steps") \
-                    .select("id") \
-                    .eq("process_name", pname) \
-                    .execute()
-
-                payload = {
-                    "process_name": pname,
-                    "hub":          hub or None,
-                    "source":       "ppt",
-                    "steps":        steps,
-                    "published":    True,
-                    "updated_at":   datetime.utcnow().isoformat(),
-                }
-                if existing.data:
-                    sb.table("process_steps").update(payload).eq("id", existing.data[0]["id"]).execute()
-                else:
-                    sb.table("process_steps").insert(payload).execute()
-
-                logger.info(f"import-ppt: upserted '{pname}' ({len(steps)} steps)")
-
-            results.append({"process_name": pname, "steps": steps})
-
+        # Return extracted data — frontend saves to Supabase (avoids backend env-var dep)
         return {"imported": len(results), "processes": results}
 
     except HTTPException:

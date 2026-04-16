@@ -546,6 +546,34 @@ export default function ContentPage() {
         const err = await res.json().catch(() => ({ detail: res.statusText }));
         throw new Error(err.detail || 'Import failed');
       }
+      const data = await res.json();
+      const processes: Array<{ process_name: string; hub: string | null; steps: DetectionStep[] }> = data.processes || [];
+
+      if (!processes.length) throw new Error('No steps found in the presentation — check that it uses red-outlined boxes or instruction text.');
+
+      // Save each extracted process to Supabase (upsert by process_name)
+      for (const proc of processes) {
+        const { data: existing } = await supabase
+          .from('process_steps').select('id').eq('process_name', proc.process_name).maybeSingle();
+        if (existing?.id) {
+          await supabase.from('process_steps').update({
+            hub:        proc.hub || null,
+            source:     'ppt',
+            steps:      proc.steps,
+            published:  true,
+            updated_at: new Date().toISOString(),
+          }).eq('id', existing.id);
+        } else {
+          await supabase.from('process_steps').insert({
+            process_name: proc.process_name,
+            hub:          proc.hub || null,
+            source:       'ppt',
+            steps:        proc.steps,
+            published:    true,
+          });
+        }
+      }
+
       setPptForm(false); setPptName(''); setPptHub(''); setPptFile(null); setPptUrl('');
       load();
     } catch (e: any) {
