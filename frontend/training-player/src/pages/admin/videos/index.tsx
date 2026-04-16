@@ -7,6 +7,29 @@ const API = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
 
 const HUBS = ['Mumbai','Delhi','Bengaluru','Hyderabad','Chennai','Kolkata','Pune','Ahmedabad','Jaipur','Lucknow'];
 
+// Tab options derived from log10_tab_url_map.csv
+// label = display name, value = url_module (path segment after /operations/)
+const TAB_OPTIONS = [
+  { label: 'SC-Ops Dashboard',   value: 'sc-ops'              },
+  { label: 'FM-Ops Dashboard',   value: 'fm-ops'              },
+  { label: 'Tracking',           value: 'tracking'            },
+  { label: 'Leads',              value: 'leads'               },
+  { label: 'Inbound',            value: 'inbound'             },
+  { label: 'Inventory',          value: 'inventory'           },
+  { label: 'Trips',              value: 'trips'               },
+  { label: 'POD',                value: 'pod'                 },
+  { label: 'COD',                value: 'cod'                 },
+  { label: 'RTO',                value: 'rto'                 },
+  { label: 'Reports',            value: 'reports'             },
+  { label: 'Digital Payments',   value: 'digital-payment'     },
+  { label: 'Monitoring Reports', value: 'monitoring-reports'  },
+  { label: 'LM-Ops Dashboard',   value: 'lm-ops'             },
+];
+
+function tabLabel(value: string) {
+  return TAB_OPTIONS.find(t => t.value === value)?.label ?? value;
+}
+
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
 function embedUrl(raw: string): string | null {
@@ -33,10 +56,17 @@ function VideoCard({ video, onDelete }: { video: ProcessVideo; onDelete: () => v
           <div style={{ fontWeight: 700, color: '#1a1a2e', fontSize: 14, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
             {video.title || video.process_name}
           </div>
-          <div style={{ fontSize: 11, color: '#888', marginTop: 2, display: 'flex', gap: 8 }}>
-            {video.hub && <span>📍 {video.hub}</span>}
-            {video.starting_tab && <span>🔗 starts at /{video.starting_tab}</span>}
-            <span>{new Date(video.created_at).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}</span>
+          <div style={{ fontSize: 11, color: '#888', marginTop: 4, display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+            {video.starting_tab
+              ? <span style={{ background: 'rgba(151,71,255,0.1)', color: '#9747FF', fontWeight: 700, padding: '1px 7px', borderRadius: 8 }}>
+                  🗂 {tabLabel(video.starting_tab)}
+                </span>
+              : <span style={{ background: '#fef3c7', color: '#d97706', fontWeight: 600, padding: '1px 7px', borderRadius: 8 }}>
+                  ⚠ no tab set
+                </span>
+            }
+            {video.hub && <span style={{ background: '#f3f4f6', padding: '1px 7px', borderRadius: 8 }}>📍 {video.hub}</span>}
+            <span style={{ color: '#ccc' }}>{new Date(video.created_at).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}</span>
           </div>
         </div>
         <button onClick={onDelete} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#e5e7eb', padding: 4, flexShrink: 0 }}>
@@ -220,15 +250,17 @@ export default function VideosPage() {
                 style={{ width: '100%', padding: '10px 14px', border: '1.5px solid #e8eaed', borderRadius: 8, fontSize: 13, boxSizing: 'border-box' as const }} />
             </div>
 
-            {/* Starting tab — auto-filled, editable */}
+            {/* Starting tab — dropdown from log10_tab_url_map */}
             <div style={{ gridColumn: '1/-1' }}>
               <label style={{ fontSize: 11, fontWeight: 600, color: '#666', textTransform: 'uppercase', letterSpacing: 0.5, display: 'block', marginBottom: 6 }}>
-                Starting Tab (url fragment)
-                <span style={{ fontWeight: 400, textTransform: 'none', marginLeft: 6 }}>— auto-filled from PPT, edit if needed</span>
+                Starting Tab *
+                <span style={{ fontWeight: 400, textTransform: 'none', marginLeft: 6 }}>— which Log10 tab triggers this video</span>
               </label>
-              <input value={startingTab} onChange={e => setStartingTab(e.target.value)}
-                placeholder="e.g. rto"
-                style={{ width: '100%', padding: '10px 14px', border: `1.5px solid ${startingTab ? '#22c55e' : '#e8eaed'}`, borderRadius: 8, fontSize: 13, boxSizing: 'border-box' as const }} />
+              <select value={startingTab} onChange={e => setStartingTab(e.target.value)}
+                style={{ width: '100%', padding: '10px 14px', border: `1.5px solid ${startingTab ? '#22c55e' : '#e8eaed'}`, borderRadius: 8, fontSize: 13, background: '#fff', boxSizing: 'border-box' as const }}>
+                <option value="">Select a tab…</option>
+                {TAB_OPTIONS.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
+              </select>
             </div>
 
           </div>
