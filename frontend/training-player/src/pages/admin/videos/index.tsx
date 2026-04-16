@@ -30,6 +30,26 @@ function tabLabel(value: string) {
   return TAB_OPTIONS.find(t => t.value === value)?.label ?? value;
 }
 
+// Auto-map extracted urlPattern → url_module using TAB_OPTIONS
+// e.g. "rto" → "rto", "digital" → "digital-payment", "sc" → "sc-ops"
+function autoMapTab(urlPattern: string): string {
+  if (!urlPattern) return '';
+  const lp = urlPattern.toLowerCase().trim();
+  // 1. Exact match
+  const exact = TAB_OPTIONS.find(t => t.value === lp);
+  if (exact) return exact.value;
+  // 2. Extracted value is a prefix of a tab value (e.g. "sc" → "sc-ops")
+  const prefixMatch = TAB_OPTIONS.find(t => t.value.startsWith(lp));
+  if (prefixMatch) return prefixMatch.value;
+  // 3. Tab value is a prefix of extracted value (e.g. "rto-manifest" → "rto")
+  const revPrefix = TAB_OPTIONS.find(t => lp.startsWith(t.value));
+  if (revPrefix) return revPrefix.value;
+  // 4. Any substring overlap
+  const contains = TAB_OPTIONS.find(t => t.value.includes(lp) || lp.includes(t.value));
+  if (contains) return contains.value;
+  return '';
+}
+
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
 function embedUrl(raw: string): string | null {
@@ -140,8 +160,11 @@ export default function VideosPage() {
       const proc = data.processes?.[0];
       if (proc) {
         setProcessName(proc.process_name || '');
-        const firstTab = proc.steps?.[0]?.urlPattern;
-        if (firstTab) setStartingTab(firstTab);
+        // Auto-map extracted urlPattern → known Log10 tab
+        const rawTab = proc.steps?.[0]?.urlPattern || '';
+        const mapped = autoMapTab(rawTab);
+        setStartingTab(mapped);
+        if (rawTab && !mapped) setError(`Couldn't auto-map tab "${rawTab}" — please select manually below`);
       }
     } catch (e: any) {
       setError(e.message);
