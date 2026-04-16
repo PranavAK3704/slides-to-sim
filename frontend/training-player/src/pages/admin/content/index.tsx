@@ -515,10 +515,44 @@ export default function ContentPage() {
   const addManualProcess = async () => {
     const name = prompt('Process name (e.g. RTO Bagging):')?.trim();
     if (!name) return;
-    const { data } = await supabase.from('process_steps').insert({
+    await supabase.from('process_steps').insert({
       process_name: name, hub: null, source: 'manual', steps: [], published: true,
-    }).select().single();
-    if (data) load();
+    });
+    load();
+  };
+
+  // ── PPT import ──
+  const [pptForm, setPptForm]     = useState(false);
+  const [pptName, setPptName]     = useState('');
+  const [pptHub,  setPptHub]      = useState('');
+  const [pptFile, setPptFile]     = useState<File | null>(null);
+  const [pptUrl,  setPptUrl]      = useState('');
+  const [pptBusy, setPptBusy]     = useState(false);
+  const [pptError, setPptError]   = useState('');
+
+  const importPpt = async () => {
+    if (!pptName.trim()) { setPptError('Process name required'); return; }
+    if (!pptFile && !pptUrl.trim()) { setPptError('Upload a file or paste a Drive URL'); return; }
+    setPptBusy(true); setPptError('');
+    try {
+      const fd = new FormData();
+      fd.append('process_name', pptName.trim());
+      if (pptHub) fd.append('hub', pptHub);
+      if (pptFile) fd.append('file', pptFile);
+      else         fd.append('drive_url', pptUrl.trim());
+
+      const res = await fetch(`${API}/api/import-ppt`, { method: 'POST', body: fd });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ detail: res.statusText }));
+        throw new Error(err.detail || 'Import failed');
+      }
+      setPptForm(false); setPptName(''); setPptHub(''); setPptFile(null); setPptUrl('');
+      load();
+    } catch (e: any) {
+      setPptError(e.message);
+    } finally {
+      setPptBusy(false);
+    }
   };
 
   const deleteEntry = async (entry: ProcessEntry) => {
@@ -586,11 +620,50 @@ export default function ContentPage() {
           <button onClick={addManualProcess} style={{ display: 'flex', alignItems: 'center', gap: 7, padding: '9px 14px', background: '#fff', color: '#555', border: '1.5px solid #e8eaed', borderRadius: 9, fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>
             <Plus size={14} /> New Process
           </button>
-          <button onClick={() => setFormOpen(!formOpen)} disabled={jobStatus === 'running'} style={{ display: 'flex', alignItems: 'center', gap: 7, padding: '9px 16px', background: 'linear-gradient(135deg,#F43397,#9747FF)', color: '#fff', border: 'none', borderRadius: 9, fontSize: 13, fontWeight: 700, cursor: 'pointer', opacity: jobStatus === 'running' ? 0.6 : 1 }}>
+          <button onClick={() => { setPptForm(v => !v); setFormOpen(false); }} style={{ display: 'flex', alignItems: 'center', gap: 7, padding: '9px 14px', background: '#fff', color: '#555', border: '1.5px solid #e8eaed', borderRadius: 9, fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>
+            <Download size={14} /> Import PPT
+          </button>
+          <button onClick={() => { setFormOpen(v => !v); setPptForm(false); }} disabled={jobStatus === 'running'} style={{ display: 'flex', alignItems: 'center', gap: 7, padding: '9px 16px', background: 'linear-gradient(135deg,#F43397,#9747FF)', color: '#fff', border: 'none', borderRadius: 9, fontSize: 13, fontWeight: 700, cursor: 'pointer', opacity: jobStatus === 'running' ? 0.6 : 1 }}>
             <Plus size={14} /> Generate Simulation
           </button>
         </div>
       </div>
+
+      {/* Import PPT form */}
+      {pptForm && (
+        <div style={{ background: '#fff', borderRadius: 14, padding: 24, boxShadow: '0 4px 20px rgba(0,0,0,0.1)', marginBottom: 24 }}>
+          <div style={{ fontSize: 15, fontWeight: 700, color: '#1a1a2e', marginBottom: 16 }}>Import Steps from PPTX</div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
+            <div>
+              <label style={{ fontSize: 11, fontWeight: 600, color: '#666', textTransform: 'uppercase', letterSpacing: 0.5, display: 'block', marginBottom: 6 }}>Process Name *</label>
+              <input value={pptName} onChange={e => setPptName(e.target.value)} placeholder="e.g. RTO Bagging" style={{ width: '100%', padding: '10px 14px', border: '1.5px solid #e8eaed', borderRadius: 8, fontSize: 13, boxSizing: 'border-box' }} />
+            </div>
+            <div>
+              <label style={{ fontSize: 11, fontWeight: 600, color: '#666', textTransform: 'uppercase', letterSpacing: 0.5, display: 'block', marginBottom: 6 }}>Hub (optional)</label>
+              <select value={pptHub} onChange={e => setPptHub(e.target.value)} style={{ width: '100%', padding: '10px 14px', border: '1.5px solid #e8eaed', borderRadius: 8, fontSize: 13, background: '#fff', boxSizing: 'border-box' as const }}>
+                <option value="">All hubs</option>
+                {['Mumbai','Delhi','Bengaluru','Hyderabad','Chennai','Kolkata','Pune','Ahmedabad','Jaipur','Lucknow'].map(h => <option key={h} value={h}>{h}</option>)}
+              </select>
+            </div>
+            <div style={{ gridColumn: '1/-1' }}>
+              <label style={{ fontSize: 11, fontWeight: 600, color: '#666', textTransform: 'uppercase', letterSpacing: 0.5, display: 'block', marginBottom: 6 }}>PPTX File</label>
+              <input type="file" accept=".pptx,.ppt" onChange={e => { setPptFile(e.target.files?.[0] ?? null); setPptUrl(''); }} style={{ width: '100%', padding: '8px 12px', border: '1.5px solid #e8eaed', borderRadius: 8, fontSize: 13, boxSizing: 'border-box' }} />
+            </div>
+            <div style={{ gridColumn: '1/-1' }}>
+              <label style={{ fontSize: 11, fontWeight: 600, color: '#666', textTransform: 'uppercase', letterSpacing: 0.5, display: 'block', marginBottom: 6 }}>— or Google Drive URL</label>
+              <input value={pptUrl} onChange={e => { setPptUrl(e.target.value); setPptFile(null); }} placeholder="https://drive.google.com/file/d/..." style={{ width: '100%', padding: '10px 14px', border: '1.5px solid #e8eaed', borderRadius: 8, fontSize: 13, boxSizing: 'border-box' }} />
+            </div>
+          </div>
+          {pptError && <div style={{ marginTop: 12, fontSize: 12, color: '#ef4444' }}>{pptError}</div>}
+          <div style={{ display: 'flex', gap: 10, marginTop: 18 }}>
+            <button onClick={importPpt} disabled={pptBusy} style={{ padding: '10px 24px', background: 'linear-gradient(135deg,#F43397,#9747FF)', color: '#fff', border: 'none', borderRadius: 8, fontSize: 13, fontWeight: 700, cursor: 'pointer', opacity: pptBusy ? 0.6 : 1 }}>
+              {pptBusy ? 'Importing…' : 'Import'}
+            </button>
+            <button onClick={() => { setPptForm(false); setPptError(''); }} style={{ padding: '10px 18px', background: '#f5f5f5', border: 'none', borderRadius: 8, fontSize: 13, cursor: 'pointer', color: '#555' }}>Cancel</button>
+          </div>
+          <div style={{ fontSize: 11, color: '#aaa', marginTop: 10 }}>PPT must use red-outlined boxes to mark click targets. Drive file must be shared as "Anyone with link".</div>
+        </div>
+      )}
 
       {/* Generate form */}
       {formOpen && (

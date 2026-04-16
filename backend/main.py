@@ -25,7 +25,7 @@ from pathlib import Path
 from typing import Optional
 from datetime import datetime
 
-from fastapi import FastAPI, HTTPException, BackgroundTasks
+from fastapi import FastAPI, HTTPException, BackgroundTasks, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -36,10 +36,12 @@ sys.path.insert(0, str(Path(__file__).parent / "slide-ingestion"))
 sys.path.insert(0, str(Path(__file__).parent / "vision-analysis"))
 sys.path.insert(0, str(Path(__file__).parent / "instruction-parser"))
 sys.path.insert(0, str(Path(__file__).parent / "simulation-generator"))
+sys.path.insert(0, str(Path(__file__).parent / "ppt-ingestion"))
 from ingestion import ingest_presentation
 from vision import analyze_presentation
 from parser import parse_and_order
 from generator import build_simulation_config
+from ppt_extractor import extract_from_pptx, download_from_drive
 
 load_dotenv()
 logging.basicConfig(level=logging.INFO)
@@ -483,6 +485,82 @@ def patch_simulation(sim_id: str, body: dict):
         json.dump(sim, f, indent=2)
     simulations[sim_id] = sim
     return sim
+
+
+# ─── PPT Import ──────────────────────────────────────────────────────────────
+
+@app.post("/api/import-ppt")
+async def import_ppt(
+    process_name: str  = Form(...),
+    hub:          Optional[str]        = Form(None),
+    drive_url:    Optional[str]        = Form(None),
+    file:         Optional[UploadFile] = File(None),
+):
+    """
+    Import a PPTX file and extract click-sequence steps for PCT detection.
+    Accepts either a file upload or a Google Drive URL.
+    Writes extracted steps to the process_steps Supabase table.
+    """
+    if not file and not drive_url:
+        raise HTTPException(status_code=422, detail="Provide either a file or drive_url")
+
+    tmp_path = None
+    try:
+        if file:
+            with tempfile.NamedTemporaryFile(suffix='.pptx', delete=False) as tmp:
+                tmp_path = tmp.name
+                content = await file.read()
+                tmp.write(content)
+        else:
+            tmp_path = download_from_drive(drive_url)
+
+        extracted = extract_from_pptx(tmp_path)
+
+        if not extracted:
+            raise HTTPException(status_code=422, detail="No steps could be extracted from this PPTX")
+
+        # Use provided process_name for the first (or only) segment;
+        # remaining segments keep their auto-detected names.
+        results = []
+        sb = _get_supabase()
+
+        for i, seg in enumerate(extracted):
+            pname = process_name if i == 0 else seg['process_name']
+            steps = seg['steps']
+
+            if sb:
+                existing = sb.table("process_steps") \
+                    .select("id") \
+                    .eq("process_name", pname) \
+                    .execute()
+
+                payload = {
+                    "process_name": pname,
+                    "hub":          hub or None,
+                    "source":       "ppt",
+                    "steps":        steps,
+                    "published":    True,
+                    "updated_at":   datetime.utcnow().isoformat(),
+                }
+                if existing.data:
+                    sb.table("process_steps").update(payload).eq("id", existing.data[0]["id"]).execute()
+                else:
+                    sb.table("process_steps").insert(payload).execute()
+
+                logger.info(f"import-ppt: upserted '{pname}' ({len(steps)} steps)")
+
+            results.append({"process_name": pname, "steps": steps})
+
+        return {"imported": len(results), "processes": results}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"import-ppt failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        if tmp_path:
+            Path(tmp_path).unlink(missing_ok=True)
 
 
 if __name__ == "__main__":
