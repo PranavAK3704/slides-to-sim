@@ -82,7 +82,7 @@ export default function VideosPage() {
   const [processName, setProcessName] = useState('');
   const [hub,         setHub]         = useState('');
   const [videoUrl,    setVideoUrl]    = useState('');
-  const [pptFile,     setPptFile]     = useState<File | null>(null);
+  const [slidesLink,  setSlidesLink]  = useState('');
   const [startingTab, setStartingTab] = useState('');
   const [busy,        setBusy]        = useState(false);
   const [error,       setError]       = useState('');
@@ -96,15 +96,16 @@ export default function VideosPage() {
 
   useEffect(() => { load(); }, [load]);
 
-  // ── Auto-extract process name + starting tab from PPT ─────────────────────
-  const extractFromPpt = async (file: File) => {
+  // ── Extract process name + starting tab from Slides link ─────────────────
+  const extractFromSlides = async (url: string) => {
+    if (!url.trim()) return;
     setExtracting(true); setError('');
     try {
       const fd = new FormData();
       fd.append('process_name', 'extract');
-      fd.append('file', file);
+      fd.append('drive_url', url.trim());
       const res = await fetch(`${API}/api/import-ppt`, { method: 'POST', body: fd });
-      if (!res.ok) throw new Error('PPT extraction failed');
+      if (!res.ok) throw new Error('Extraction failed — make sure the deck is shared as "Anyone with link"');
       const data = await res.json();
       const proc = data.processes?.[0];
       if (proc) {
@@ -113,7 +114,7 @@ export default function VideosPage() {
         if (firstTab) setStartingTab(firstTab);
       }
     } catch (e: any) {
-      setError('Could not read PPT: ' + e.message);
+      setError(e.message);
     } finally {
       setExtracting(false);
     }
@@ -134,7 +135,7 @@ export default function VideosPage() {
       });
       if (sbErr) throw new Error(sbErr.message);
       setFormOpen(false);
-      setProcessName(''); setHub(''); setVideoUrl(''); setPptFile(null); setStartingTab('');
+      setProcessName(''); setHub(''); setVideoUrl(''); setSlidesLink(''); setStartingTab('');
       load();
     } catch (e: any) {
       setError(e.message);
@@ -174,17 +175,23 @@ export default function VideosPage() {
           <div style={{ fontSize: 15, fontWeight: 700, color: '#1a1a2e', marginBottom: 20 }}>Add Video</div>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
 
-            {/* PPT upload — auto-fills everything */}
+            {/* Slides link — auto-fills name + starting tab */}
             <div style={{ gridColumn: '1/-1' }}>
               <label style={{ fontSize: 11, fontWeight: 600, color: '#666', textTransform: 'uppercase', letterSpacing: 0.5, display: 'block', marginBottom: 6 }}>
-                PPT File — auto-fills process name + starting tab
+                Google Slides Link — auto-fills process name + starting tab
                 {extracting && <span style={{ marginLeft: 8, color: '#9747FF', fontWeight: 400, textTransform: 'none' }}>
                   <Loader size={10} style={{ display: 'inline', animation: 'spin 1s linear infinite', marginRight: 4 }} />extracting…
                 </span>}
               </label>
-              <input type="file" accept=".pptx,.ppt"
-                onChange={e => { const f = e.target.files?.[0] ?? null; setPptFile(f); if (f) extractFromPpt(f); }}
-                style={{ width: '100%', padding: '8px 12px', border: '1.5px solid #e8eaed', borderRadius: 8, fontSize: 13, boxSizing: 'border-box' as const }} />
+              <div style={{ display: 'flex', gap: 8 }}>
+                <input value={slidesLink} onChange={e => setSlidesLink(e.target.value)}
+                  placeholder="https://docs.google.com/presentation/d/..."
+                  style={{ flex: 1, padding: '10px 14px', border: '1.5px solid #e8eaed', borderRadius: 8, fontSize: 13, boxSizing: 'border-box' as const }} />
+                <button type="button" onClick={() => extractFromSlides(slidesLink)} disabled={!slidesLink.trim() || extracting}
+                  style={{ padding: '10px 16px', background: '#9747FF', color: '#fff', border: 'none', borderRadius: 8, fontSize: 13, fontWeight: 600, cursor: 'pointer', whiteSpace: 'nowrap', opacity: (!slidesLink.trim() || extracting) ? 0.5 : 1 }}>
+                  {extracting ? 'Extracting…' : 'Extract'}
+                </button>
+              </div>
             </div>
 
             {/* Process name — auto-filled or manual */}
