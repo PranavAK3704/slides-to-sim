@@ -491,7 +491,7 @@ def patch_simulation(sim_id: str, body: dict):
 
 @app.post("/api/import-ppt")
 async def import_ppt(
-    process_name: str  = Form(...),
+    process_name: str  = Form(default=''),
     hub:          Optional[str]        = Form(None),
     drive_url:    Optional[str]        = Form(None),
     file:         Optional[UploadFile] = File(None),
@@ -523,7 +523,8 @@ async def import_ppt(
         # remaining segments keep their auto-detected names.
         results = []
         for i, seg in enumerate(extracted):
-            pname = process_name if i == 0 else seg['process_name']
+            # Use provided process_name only for first segment if non-empty; always fall back to PPT title
+            pname = (process_name.strip() or seg['process_name']) if i == 0 else seg['process_name']
             results.append({"process_name": pname, "hub": hub or None, "steps": seg['steps']})
 
         # Return extracted data — frontend saves to Supabase (avoids backend env-var dep)

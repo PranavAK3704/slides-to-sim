@@ -152,7 +152,6 @@ export default function VideosPage() {
     setExtracting(true); setError('');
     try {
       const fd = new FormData();
-      fd.append('process_name', 'extract');
       fd.append('drive_url', url.trim());
       const res = await fetch(`${API}/api/import-ppt`, { method: 'POST', body: fd });
       if (!res.ok) throw new Error('Extraction failed — make sure the deck is shared as "Anyone with link"');
@@ -239,7 +238,7 @@ export default function VideosPage() {
               <div style={{ display: 'flex', gap: 8 }}>
                 <input value={slidesLink} onChange={e => setSlidesLink(e.target.value)}
                   placeholder="https://docs.google.com/presentation/d/..."
-                  style={{ flex: 1, padding: '10px 14px', border: '1.5px solid #e8eaed', borderRadius: 8, fontSize: 13, boxSizing: 'border-box' as const }} />
+                  style={{ flex: 1, padding: '10px 14px', border: '1.5px solid #e8eaed', borderRadius: 8, fontSize: 13, color: '#1a1a2e', boxSizing: 'border-box' as const }} />
                 <button type="button" onClick={() => extractFromSlides(slidesLink)} disabled={!slidesLink.trim() || extracting}
                   style={{ padding: '10px 16px', background: '#9747FF', color: '#fff', border: 'none', borderRadius: 8, fontSize: 13, fontWeight: 600, cursor: 'pointer', whiteSpace: 'nowrap', opacity: (!slidesLink.trim() || extracting) ? 0.5 : 1 }}>
                   {extracting ? 'Extracting…' : 'Extract'}
@@ -252,7 +251,7 @@ export default function VideosPage() {
               <label style={{ fontSize: 11, fontWeight: 600, color: '#666', textTransform: 'uppercase', letterSpacing: 0.5, display: 'block', marginBottom: 6 }}>Process Name *</label>
               <input value={processName} onChange={e => setProcessName(e.target.value)}
                 placeholder="e.g. RTO Bagging"
-                style={{ width: '100%', padding: '10px 14px', border: '1.5px solid #e8eaed', borderRadius: 8, fontSize: 13, boxSizing: 'border-box' as const }} />
+                style={{ width: '100%', padding: '10px 14px', border: '1.5px solid #e8eaed', borderRadius: 8, fontSize: 13, color: '#1a1a2e', boxSizing: 'border-box' as const }} />
             </div>
 
             {/* Hub */}
@@ -270,7 +269,7 @@ export default function VideosPage() {
               <label style={{ fontSize: 11, fontWeight: 600, color: '#666', textTransform: 'uppercase', letterSpacing: 0.5, display: 'block', marginBottom: 6 }}>Video URL *</label>
               <input value={videoUrl} onChange={e => setVideoUrl(e.target.value)}
                 placeholder="YouTube, Google Drive, or direct MP4 URL"
-                style={{ width: '100%', padding: '10px 14px', border: '1.5px solid #e8eaed', borderRadius: 8, fontSize: 13, boxSizing: 'border-box' as const }} />
+                style={{ width: '100%', padding: '10px 14px', border: '1.5px solid #e8eaed', borderRadius: 8, fontSize: 13, color: '#1a1a2e', boxSizing: 'border-box' as const }} />
             </div>
 
             {/* Starting tab — dropdown from log10_tab_url_map */}
