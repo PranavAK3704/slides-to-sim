@@ -223,23 +223,48 @@ def extract_from_pptx(ppt_path: str) -> list[dict]:
 
 # ── Drive download helper ─────────────────────────────────────────────────────
 
-def download_from_drive(drive_url: str) -> str:
-    """Download a Google Drive PPTX and return the temp file path."""
-    match = re.search(r'/d/([a-zA-Z0-9_-]+)', drive_url) or \
-            re.search(r'[?&]id=([a-zA-Z0-9_-]+)', drive_url)
+def download_from_url(url: str) -> str:
+    """
+    Download a PPTX from a Google Slides or Google Drive URL.
+    Returns the temp file path.
+
+    Handles:
+    - Google Slides: https://docs.google.com/presentation/d/{ID}/...
+      → exports as PPTX via /export/pptx
+    - Google Drive:  https://drive.google.com/file/d/{ID}/...
+      → direct download
+    """
+    # ── Google Slides export ──
+    slides_match = re.search(r'docs\.google\.com/presentation/d/([a-zA-Z0-9_-]+)', url)
+    if slides_match:
+        pres_id  = slides_match.group(1)
+        download_url = f"https://docs.google.com/presentation/d/{pres_id}/export/pptx"
+        session  = requests.Session()
+        resp     = session.get(download_url, stream=True, allow_redirects=True)
+        if not resp.ok:
+            raise ValueError(f"Google Slides export failed ({resp.status_code}) — make sure the deck is shared as 'Anyone with link'")
+        return _write_tmp(resp)
+
+    # ── Google Drive download ──
+    match = re.search(r'/d/([a-zA-Z0-9_-]+)', url) or \
+            re.search(r'[?&]id=([a-zA-Z0-9_-]+)', url)
     if not match:
-        raise ValueError(f"Could not extract file ID from: {drive_url}")
+        raise ValueError(f"Could not extract file ID from URL: {url}")
 
-    file_id = match.group(1)
-    url = f"https://drive.google.com/uc?export=download&id={file_id}"
-
-    session = requests.Session()
-    resp = session.get(url, stream=True)
+    file_id      = match.group(1)
+    download_url = f"https://drive.google.com/uc?export=download&id={file_id}"
+    session      = requests.Session()
+    resp         = session.get(download_url, stream=True)
+    # Handle virus-scan confirmation cookie for large files
     for k, v in resp.cookies.items():
         if k.startswith('download_warning'):
-            resp = session.get(f"{url}&confirm={v}", stream=True)
+            resp = session.get(f"{download_url}&confirm={v}", stream=True)
             break
+    return _write_tmp(resp)
 
+
+def _write_tmp(resp) -> str:
+    """Write a streaming response to a temp PPTX file, return path."""
     tmp = tempfile.NamedTemporaryFile(suffix='.pptx', delete=False)
     for chunk in resp.iter_content(32768):
         if chunk:
@@ -247,11 +272,16 @@ def download_from_drive(drive_url: str) -> str:
     tmp.flush()
     tmp.close()
 
-    # Sanity check
     size = Path(tmp.name).stat().st_size
     if size < 1000:
         with open(tmp.name, 'rb') as f:
-            if b'<!DOCTYPE' in f.read(100):
-                raise ValueError("Got HTML instead of PPTX — check Drive permissions (must be 'Anyone with link')")
-
+            if b'<!DOCTYPE' in f.read(200):
+                raise ValueError(
+                    "Got an HTML page instead of a PPTX — "
+                    "file must be shared as 'Anyone with link' (View)"
+                )
     return tmp.name
+
+
+# Keep old name as alias so existing callers don't break
+download_from_drive = download_from_url

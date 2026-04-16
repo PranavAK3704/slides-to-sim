@@ -650,8 +650,8 @@ export default function ContentPage() {
               <input type="file" accept=".pptx,.ppt" onChange={e => { setPptFile(e.target.files?.[0] ?? null); setPptUrl(''); }} style={{ width: '100%', padding: '8px 12px', border: '1.5px solid #e8eaed', borderRadius: 8, fontSize: 13, boxSizing: 'border-box' }} />
             </div>
             <div style={{ gridColumn: '1/-1' }}>
-              <label style={{ fontSize: 11, fontWeight: 600, color: '#666', textTransform: 'uppercase', letterSpacing: 0.5, display: 'block', marginBottom: 6 }}>— or Google Drive URL</label>
-              <input value={pptUrl} onChange={e => { setPptUrl(e.target.value); setPptFile(null); }} placeholder="https://drive.google.com/file/d/..." style={{ width: '100%', padding: '10px 14px', border: '1.5px solid #e8eaed', borderRadius: 8, fontSize: 13, boxSizing: 'border-box' }} />
+              <label style={{ fontSize: 11, fontWeight: 600, color: '#666', textTransform: 'uppercase', letterSpacing: 0.5, display: 'block', marginBottom: 6 }}>— or Google Slides / Drive URL</label>
+              <input value={pptUrl} onChange={e => { setPptUrl(e.target.value); setPptFile(null); }} placeholder="https://docs.google.com/presentation/d/...  or  https://drive.google.com/file/d/..." style={{ width: '100%', padding: '10px 14px', border: '1.5px solid #e8eaed', borderRadius: 8, fontSize: 13, boxSizing: 'border-box' }} />
             </div>
           </div>
           {pptError && <div style={{ marginTop: 12, fontSize: 12, color: '#ef4444' }}>{pptError}</div>}
@@ -661,7 +661,7 @@ export default function ContentPage() {
             </button>
             <button onClick={() => { setPptForm(false); setPptError(''); }} style={{ padding: '10px 18px', background: '#f5f5f5', border: 'none', borderRadius: 8, fontSize: 13, cursor: 'pointer', color: '#555' }}>Cancel</button>
           </div>
-          <div style={{ fontSize: 11, color: '#aaa', marginTop: 10 }}>PPT must use red-outlined boxes to mark click targets. Drive file must be shared as "Anyone with link".</div>
+          <div style={{ fontSize: 11, color: '#aaa', marginTop: 10 }}>PPT must use red-outlined boxes to mark click targets. Slides/Drive file must be shared as "Anyone with link (View)".</div>
         </div>
       )}
 
