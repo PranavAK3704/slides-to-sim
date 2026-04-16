@@ -1,18 +1,13 @@
 import { useEffect, useState, useCallback } from 'react';
 import AdminLayout from '@/components/AdminLayout';
 import { supabase, ProcessVideo } from '@/lib/supabase';
-import { Plus, Trash2, ExternalLink, Video, Loader, ChevronDown, ChevronRight } from 'lucide-react';
+import { Plus, Trash2, ExternalLink, Video, Loader, ChevronDown, ChevronRight, FileVideo } from 'lucide-react';
 
 const API = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
 
 const HUBS = ['Mumbai','Delhi','Bengaluru','Hyderabad','Chennai','Kolkata','Pune','Ahmedabad','Jaipur','Lucknow'];
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
-
-function parseSlidesId(url: string): string | null {
-  const m = url.match(/presentation\/d\/([a-zA-Z0-9_-]+)/);
-  return m ? m[1] : null;
-}
 
 function embedUrl(raw: string): string | null {
   // YouTube
@@ -84,11 +79,9 @@ export default function VideosPage() {
   const [formOpen, setFormOpen] = useState(false);
 
   // Form state
-  const [title,       setTitle]       = useState('');
   const [processName, setProcessName] = useState('');
   const [hub,         setHub]         = useState('');
   const [videoUrl,    setVideoUrl]    = useState('');
-  const [slidesUrl,   setSlidesUrl]   = useState('');
   const [pptFile,     setPptFile]     = useState<File | null>(null);
   const [startingTab, setStartingTab] = useState('');
   const [busy,        setBusy]        = useState(false);
@@ -115,10 +108,9 @@ export default function VideosPage() {
       const data = await res.json();
       const proc = data.processes?.[0];
       if (proc) {
-        if (!processName) setProcessName(proc.process_name || '');
-        if (!title)       setTitle(proc.process_name || '');
+        setProcessName(proc.process_name || '');
         const firstTab = proc.steps?.[0]?.urlPattern;
-        if (firstTab && !startingTab) setStartingTab(firstTab);
+        if (firstTab) setStartingTab(firstTab);
       }
     } catch (e: any) {
       setError('Could not read PPT: ' + e.message);
@@ -126,12 +118,6 @@ export default function VideosPage() {
       setExtracting(false);
     }
   };
-
-  // ── Slides export link ─────────────────────────────────────────────────────
-  const slidesExportUrl = (() => {
-    const id = parseSlidesId(slidesUrl);
-    return id ? `https://docs.google.com/presentation/d/${id}/export/mp4` : null;
-  })();
 
   // ── Save ──────────────────────────────────────────────────────────────────
   const save = async () => {
@@ -143,13 +129,12 @@ export default function VideosPage() {
         process_name: processName.trim(),
         hub:          hub || null,
         video_url:    videoUrl.trim(),
-        title:        title.trim() || processName.trim(),
+        title:        processName.trim(),
         starting_tab: startingTab.trim() || null,
       });
       if (sbErr) throw new Error(sbErr.message);
       setFormOpen(false);
-      setTitle(''); setProcessName(''); setHub(''); setVideoUrl('');
-      setSlidesUrl(''); setPptFile(null); setStartingTab('');
+      setProcessName(''); setHub(''); setVideoUrl(''); setPptFile(null); setStartingTab('');
       load();
     } catch (e: any) {
       setError(e.message);
@@ -186,48 +171,31 @@ export default function VideosPage() {
       {/* Add Video form */}
       {formOpen && (
         <div style={{ background: '#fff', borderRadius: 14, padding: 24, boxShadow: '0 4px 20px rgba(0,0,0,0.1)', marginBottom: 24 }}>
-          <div style={{ fontSize: 15, fontWeight: 700, color: '#1a1a2e', marginBottom: 18 }}>Add Video</div>
-
-          {/* Step 1: Google Slides → MP4 helper */}
-          <div style={{ background: '#f8f5ff', border: '1px solid rgba(151,71,255,0.2)', borderRadius: 10, padding: 16, marginBottom: 20 }}>
-            <div style={{ fontSize: 12, fontWeight: 700, color: '#9747FF', marginBottom: 8 }}>Step 1 — Create your video (optional)</div>
-            <div style={{ fontSize: 12, color: '#666', marginBottom: 10 }}>
-              Paste a Google Slides URL to get a direct MP4 export link. Open it, let Google render your deck as a video, then copy that URL below.
-            </div>
-            <div style={{ display: 'flex', gap: 8 }}>
-              <input value={slidesUrl} onChange={e => setSlidesUrl(e.target.value)}
-                placeholder="https://docs.google.com/presentation/d/..."
-                style={{ flex: 1, padding: '8px 12px', border: '1.5px solid #e8eaed', borderRadius: 7, fontSize: 12, boxSizing: 'border-box' as const }} />
-              {slidesExportUrl ? (
-                <a href={slidesExportUrl} target="_blank" rel="noreferrer"
-                  style={{ display: 'flex', alignItems: 'center', gap: 5, padding: '8px 14px',
-                    background: '#9747FF', color: '#fff', borderRadius: 7, fontSize: 12, fontWeight: 700,
-                    textDecoration: 'none', whiteSpace: 'nowrap' }}>
-                  <ExternalLink size={12} /> Export MP4
-                </a>
-              ) : (
-                <button disabled style={{ padding: '8px 14px', background: '#e8eaed', color: '#aaa', border: 'none', borderRadius: 7, fontSize: 12, cursor: 'not-allowed' }}>
-                  Export MP4
-                </button>
-              )}
-            </div>
-          </div>
-
-          {/* Step 2: Video details */}
-          <div style={{ fontSize: 12, fontWeight: 700, color: '#555', marginBottom: 12 }}>Step 2 — Video details</div>
+          <div style={{ fontSize: 15, fontWeight: 700, color: '#1a1a2e', marginBottom: 20 }}>Add Video</div>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
+
+            {/* PPT upload — auto-fills everything */}
             <div style={{ gridColumn: '1/-1' }}>
-              <label style={{ fontSize: 11, fontWeight: 600, color: '#666', textTransform: 'uppercase', letterSpacing: 0.5, display: 'block', marginBottom: 6 }}>Video URL *</label>
-              <input value={videoUrl} onChange={e => setVideoUrl(e.target.value)}
-                placeholder="YouTube, Google Drive, or direct MP4 URL"
-                style={{ width: '100%', padding: '10px 14px', border: '1.5px solid #e8eaed', borderRadius: 8, fontSize: 13, boxSizing: 'border-box' as const }} />
+              <label style={{ fontSize: 11, fontWeight: 600, color: '#666', textTransform: 'uppercase', letterSpacing: 0.5, display: 'block', marginBottom: 6 }}>
+                PPT File — auto-fills process name + starting tab
+                {extracting && <span style={{ marginLeft: 8, color: '#9747FF', fontWeight: 400, textTransform: 'none' }}>
+                  <Loader size={10} style={{ display: 'inline', animation: 'spin 1s linear infinite', marginRight: 4 }} />extracting…
+                </span>}
+              </label>
+              <input type="file" accept=".pptx,.ppt"
+                onChange={e => { const f = e.target.files?.[0] ?? null; setPptFile(f); if (f) extractFromPpt(f); }}
+                style={{ width: '100%', padding: '8px 12px', border: '1.5px solid #e8eaed', borderRadius: 8, fontSize: 13, boxSizing: 'border-box' as const }} />
             </div>
+
+            {/* Process name — auto-filled or manual */}
             <div>
               <label style={{ fontSize: 11, fontWeight: 600, color: '#666', textTransform: 'uppercase', letterSpacing: 0.5, display: 'block', marginBottom: 6 }}>Process Name *</label>
               <input value={processName} onChange={e => setProcessName(e.target.value)}
                 placeholder="e.g. RTO Bagging"
                 style={{ width: '100%', padding: '10px 14px', border: '1.5px solid #e8eaed', borderRadius: 8, fontSize: 13, boxSizing: 'border-box' as const }} />
             </div>
+
+            {/* Hub */}
             <div>
               <label style={{ fontSize: 11, fontWeight: 600, color: '#666', textTransform: 'uppercase', letterSpacing: 0.5, display: 'block', marginBottom: 6 }}>Hub (optional)</label>
               <select value={hub} onChange={e => setHub(e.target.value)}
@@ -236,38 +204,33 @@ export default function VideosPage() {
                 {HUBS.map(h => <option key={h} value={h}>{h}</option>)}
               </select>
             </div>
-            <div>
-              <label style={{ fontSize: 11, fontWeight: 600, color: '#666', textTransform: 'uppercase', letterSpacing: 0.5, display: 'block', marginBottom: 6 }}>Title (optional)</label>
-              <input value={title} onChange={e => setTitle(e.target.value)}
-                placeholder="defaults to process name"
+
+            {/* Video URL */}
+            <div style={{ gridColumn: '1/-1' }}>
+              <label style={{ fontSize: 11, fontWeight: 600, color: '#666', textTransform: 'uppercase', letterSpacing: 0.5, display: 'block', marginBottom: 6 }}>Video URL *</label>
+              <input value={videoUrl} onChange={e => setVideoUrl(e.target.value)}
+                placeholder="YouTube, Google Drive, or direct MP4 URL"
                 style={{ width: '100%', padding: '10px 14px', border: '1.5px solid #e8eaed', borderRadius: 8, fontSize: 13, boxSizing: 'border-box' as const }} />
             </div>
-            <div>
-              <label style={{ fontSize: 11, fontWeight: 600, color: '#666', textTransform: 'uppercase', letterSpacing: 0.5, display: 'block', marginBottom: 6 }}>Starting Tab (url fragment)</label>
-              <input value={startingTab} onChange={e => setStartingTab(e.target.value)}
-                placeholder="e.g. rto  (auto-filled from PPT)"
-                style={{ width: '100%', padding: '10px 14px', border: '1.5px solid #e8eaed', borderRadius: 8, fontSize: 13, boxSizing: 'border-box' as const }} />
-            </div>
-            <div>
+
+            {/* Starting tab — auto-filled, editable */}
+            <div style={{ gridColumn: '1/-1' }}>
               <label style={{ fontSize: 11, fontWeight: 600, color: '#666', textTransform: 'uppercase', letterSpacing: 0.5, display: 'block', marginBottom: 6 }}>
-                PPT — auto-fill name + tab
-                {extracting && <span style={{ marginLeft: 6, color: '#9747FF', fontWeight: 400 }}>extracting…</span>}
+                Starting Tab (url fragment)
+                <span style={{ fontWeight: 400, textTransform: 'none', marginLeft: 6 }}>— auto-filled from PPT, edit if needed</span>
               </label>
-              <input type="file" accept=".pptx,.ppt"
-                onChange={e => {
-                  const f = e.target.files?.[0] ?? null;
-                  setPptFile(f);
-                  if (f) extractFromPpt(f);
-                }}
-                style={{ width: '100%', padding: '8px 12px', border: '1.5px solid #e8eaed', borderRadius: 8, fontSize: 12, boxSizing: 'border-box' as const }} />
+              <input value={startingTab} onChange={e => setStartingTab(e.target.value)}
+                placeholder="e.g. rto"
+                style={{ width: '100%', padding: '10px 14px', border: `1.5px solid ${startingTab ? '#22c55e' : '#e8eaed'}`, borderRadius: 8, fontSize: 13, boxSizing: 'border-box' as const }} />
             </div>
+
           </div>
 
           {error && <div style={{ marginTop: 12, fontSize: 12, color: '#ef4444' }}>{error}</div>}
 
           <div style={{ display: 'flex', gap: 10, marginTop: 18 }}>
-            <button onClick={save} disabled={busy}
-              style={{ padding: '10px 24px', background: 'linear-gradient(135deg,#F43397,#9747FF)', color: '#fff', border: 'none', borderRadius: 8, fontSize: 13, fontWeight: 700, cursor: 'pointer', opacity: busy ? 0.6 : 1 }}>
+            <button onClick={save} disabled={busy || extracting}
+              style={{ padding: '10px 24px', background: 'linear-gradient(135deg,#F43397,#9747FF)', color: '#fff', border: 'none', borderRadius: 8, fontSize: 13, fontWeight: 700, cursor: 'pointer', opacity: (busy || extracting) ? 0.6 : 1 }}>
               {busy ? 'Saving…' : 'Save Video'}
             </button>
             <button onClick={() => { setFormOpen(false); setError(''); }}
