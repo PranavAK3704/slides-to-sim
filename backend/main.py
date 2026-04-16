@@ -147,6 +147,56 @@ def _push_sim_to_supabase(sim_config: dict, process_name: str = None, hub: str =
     except Exception as e:
         logger.error(f"Supabase push failed: {e}")
 
+    # Auto-populate process_steps for PCT detection
+    _push_process_steps_to_supabase(sim_config, process_name, hub)
+
+
+def _push_process_steps_to_supabase(sim_config: dict, process_name: str = None, hub: str = None):
+    """Extract elementText + urlPattern from sim steps and upsert into process_steps table."""
+    sb = _get_supabase()
+    if not sb or not process_name:
+        return
+    try:
+        raw_steps = sim_config.get("steps", [])
+        detection_steps = []
+        for i, s in enumerate(raw_steps):
+            et = (s.get("elementText") or "").strip()
+            up = (s.get("urlPattern") or "").strip()
+            if et:
+                detection_steps.append({"order": i + 1, "elementText": et, "urlPattern": up})
+
+        if not detection_steps:
+            logger.warning(f"process_steps: no elementText found in sim {sim_config['id']}, skipping")
+            return
+
+        # Upsert by process_name + hub (one entry per process per hub)
+        existing = sb.table("process_steps") \
+            .select("id") \
+            .eq("process_name", process_name) \
+            .eq("hub", hub or "") \
+            .execute()
+
+        payload = {
+            "process_name": process_name,
+            "hub":          hub or None,
+            "source":       "gemini",
+            "steps":        detection_steps,
+            "published":    True,
+            "sim_id":       sim_config["id"],
+            "updated_at":   datetime.utcnow().isoformat(),
+        }
+
+        if existing.data:
+            sb.table("process_steps").update(payload).eq("id", existing.data[0]["id"]).execute()
+            logger.info(f"process_steps updated for '{process_name}' ({len(detection_steps)} steps)")
+        else:
+            sb.table("process_steps").insert(payload).execute()
+            logger.info(f"process_steps created for '{process_name}' ({len(detection_steps)} steps)")
+
+    except Exception as e:
+        logger.error(f"process_steps push failed: {e}")
+
+
 # In-memory cache (populated from SQLite on demand)
 simulations: dict[str, dict] = {}
 

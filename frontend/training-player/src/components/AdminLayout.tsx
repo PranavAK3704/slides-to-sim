@@ -3,7 +3,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/router';
 import {
   LayoutDashboard, Users, BarChart3,
-  Settings, LogOut, Zap, Loader, ClipboardList, Building2, UserCheck, Clapperboard
+  Settings, LogOut, Zap, Loader, ClipboardList, Building2, UserCheck, Clapperboard, ListChecks
 } from 'lucide-react';
 import { useAdminAuth } from '@/hooks/useAdminAuth';
 
@@ -12,6 +12,7 @@ const NAV = [
   { href: '/admin/agents',         label: 'Captains',         icon: Users           },
   { href: '/admin/hubs',           label: 'Hub Intelligence', icon: Building2       },
   { href: '/admin/members',        label: 'Members',          icon: UserCheck       },
+  { href: '/admin/steps',          label: 'Steps',            icon: ListChecks      },
   { href: '/admin/content',        label: 'Simulations',      icon: Clapperboard    },
   { href: '/admin/assessments',    label: 'Assessments',      icon: ClipboardList   },
   { href: '/admin/reports',        label: 'Reports',          icon: BarChart3       },

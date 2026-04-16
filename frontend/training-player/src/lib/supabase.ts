@@ -79,3 +79,21 @@ export interface HubSummary {
   sessions_today: number;
   avg_level: number;
 }
+
+export interface DetectionStep {
+  order:       number;
+  elementText: string;
+  urlPattern:  string;
+}
+
+export interface ProcessStep {
+  id:           string;
+  process_name: string;
+  hub:          string | null;
+  source:       'ppt' | 'gemini' | 'manual';
+  steps:        DetectionStep[];
+  published:    boolean;
+  sim_id:       string | null;
+  created_at:   string;
+  updated_at:   string;
+}
